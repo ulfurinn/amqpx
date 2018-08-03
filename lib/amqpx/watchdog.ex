@@ -9,11 +9,13 @@ defmodule AMQPX.Watchdog do
 
   def init(args) do
     id = Keyword.fetch!(args, :connection)
-    interval = Keyword.get(args, :reconnect, 1000)
+    interval = Keyword.get(args, :reconnect, 1) * 1000
+
     case AMQPX.ConnectionPool.get(id) do
       {:ok, conn} ->
         Process.monitor(conn.pid)
         {:ok, nil}
+
       {:error, reason} ->
         Logger.error("failed to connect to RabbitMQ: #{reason}; will reconnect in #{interval} ms")
         Process.sleep(interval)

@@ -7,7 +7,11 @@ defmodule AMQPX.MixProject do
       version: "0.1.0",
       elixir: "~> 1.6",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      name: "AMQPX",
+      docs: [
+        extras: ["README.md"]
+      ]
     ]
   end
 
@@ -22,7 +26,10 @@ defmodule AMQPX.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:amqp, "~> 1.0"}
+      {:amqp, "~> 1.0"},
+      {:uuid, "~> 1.1"},
+      {:jason, "~> 1.1", only: :test},
+      {:ex_doc, ex_doc_version(), only: :dev, runtime: false}
     ] ++ overrides()
   end
 
@@ -34,5 +41,9 @@ defmodule AMQPX.MixProject do
     else
       []
     end
+  end
+
+  defp ex_doc_version() do
+    "~> 0.19-rc"
   end
 end

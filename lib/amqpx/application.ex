@@ -1,9 +1,11 @@
 defmodule AMQPX.Application do
   use Application
 
+  @moduledoc false
+
   def start(_type, _args) do
     children = [
-      {Task.Supervisor, name: task_supervisor()},
+      {Task.Supervisor, name: task_supervisor(), shutdown: :infinity},
       AMQPX.ConnectionPool
     ]
 

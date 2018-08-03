@@ -1,6 +1,10 @@
 # AMQPX
 
-**TODO: Add description**
+A set of higher-level AMQP constructs:
+
+* message handlers with transparent connection recovery
+* RPC over AMQP
+* message encoding
 
 ## Installation
 
