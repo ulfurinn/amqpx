@@ -1,0 +1,5 @@
+sudo: required # for rabbitmq
+services: rabbitmq
+language: elixir
+elixir: '1.7.1'
+otp_release: '21.0'
