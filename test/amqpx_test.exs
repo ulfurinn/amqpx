@@ -23,7 +23,7 @@ defmodule AMQPX.Test do
        meta = %{content_type: "application/json", correlation_id: "dead-beef"}} ->
         AMQP.Basic.ack(ch(), meta.delivery_tag)
     after
-      100 ->
+      1000 ->
         flunk("timeout")
     end
   end
