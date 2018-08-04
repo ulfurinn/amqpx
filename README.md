@@ -1,5 +1,7 @@
 # AMQPX
 
+[![Build Status](https://travis-ci.org/ulfurinn/amqpx.svg?branch=master)](https://travis-ci.org/ulfurinn/amqpx)
+
 A set of higher-level AMQP constructs:
 
 * message handlers with transparent connection recovery
