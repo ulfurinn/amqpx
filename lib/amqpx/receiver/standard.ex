@@ -1,11 +1,59 @@
 defmodule AMQPX.Receiver.Standard do
-  @callback handle(payload :: String.t(), meta :: Map.t()) :: any()
+  @doc """
+  Called on every incoming message.
+
+  The payload type will depend on the content type of the incoming message and the codec registered for that content type.
+  If there is no matching codec for that content type, the payload will be passed as is.
+  """
+  @callback handle(payload :: any(), meta :: Map.t()) :: any()
+
+  @doc """
+  Takes the result or `c:handle/2` or its crash reason and formats it in a way suitable for sending as a reply message.
+
+  Only used if the incoming message indicates that a reply is necessary.
+
+  `payload` will be passed through the codec indicated by `mime_type`.
+  A payload with no matching codec for the declared MIME type will be sent as is.
+  A bare payload string will be sent as is with the content type `application/octet-stream`.
+  """
   @callback format_response(response :: any(), meta :: Map.t()) ::
               {mime_type :: :json | :text | String.t(), payload :: String.t()} | payload ::
               String.t()
+
+  @doc """
+  Tells the receiver whether to requeue messages when `c:handle/2` crashes.
+
+  Defaults to `false` if not implemented.
+  """
   @callback requeue?() :: true | false | :once
 
   @optional_callbacks requeue?: 0
+
+  @moduledoc """
+  A message handler implementing some sane defaults.
+
+  This server should not be started directly; use the `AMQPX.Receiver` supervisor instead.
+
+  Each receiver sets up its own channel and makes sure it is disposed of when the receiver dies.
+  If you're implementing your own receiver, remember to use `AMQPX.link_channel/1` to avoid leaking channels with unacked messages on them, or even simply `Process.link/1`.
+
+  Each receiver sets up a single queue and binds it with multiple routing keys, assigning to each key a handler module implementing the `AMQPX.Receiver.Standard` behaviour; read the callback documentation for details.
+
+  If the arriving message specifies `reply_to` and `correlation_id`, the result of the message handler (or its crash reason) will be sent as a reply message. This is designed to work transparently in conjunction with `AMQPX.RPC`.
+
+  # Message handler lifetime
+
+  Each message spawns a `Task` placed under a `Task.Supervisor` with graceful shutdown to help ensure that under normal shutdown all message handlers are allowed to finish their work and send the acks to the broker.
+
+  `AMQPX` provides a default supervisor process; however, to help ensure that message handlers have access to the resources they need, such as database connections,
+  it is recommended that you start your own `Task.Supervisor`, set ample shutdown time, and place it in your supervision tree after the required resource but before the `AMQPX.Receiver` that will be spawning the handlers.
+
+  # Codecs
+
+  `AMQPX` tries to separate message encoding and the business logic of message handlers with codecs.
+
+  A codec is a module implementing the `AMQPX.Codec` behaviour. The only codec provided out of the box is `AMQPX.Codec.Text`.
+  """
 
   use GenServer
   require Logger
@@ -19,16 +67,56 @@ defmodule AMQPX.Receiver.Standard do
     :codecs
   ]
 
+  @type exchange_option ::
+          {:declare, boolean()}
+          | {:durable, boolean()}
+          | {:passive, boolean()}
+          | {:auto_delete, boolean()}
+          | {:internal, boolean()}
+          | {:no_wait, boolean()}
+          | {:arguments, list()}
+
+  @type option ::
+          {:connection, connection_id :: atom()}
+          | {:prefetch, integer()}
+          | {:exchange,
+             {type :: atom(), name :: String.t(), opts :: [exchange_option]}
+             | {type :: atom(), name :: String.t()}
+             | name :: String.t()}
+          | {:queue,
+             nil
+             | name ::
+               String.t()
+               | opts ::
+               Keyword.t()
+               | {name :: String.t(), opts :: Keyword.t()}}
+          | {:keys, %{(routing_key :: String.t()) => handler :: module()}}
+          | {:codecs, %{(mime_type :: String.t()) => :handler | codec :: module()}}
+          | {:supervisor, atom()}
+
   @doc false
   def child_spec(args) do
     %{
-      id: Keyword.get(args, :id, __MODULE__),
+      id: :id,
       start: {__MODULE__, :start_link, [args]},
       shutdown: :infinity
     }
   end
 
-  @doc false
+  @doc """
+  Starts the process.
+
+  ## Options
+
+  * `:connection` – do not pass directly, it will be overwritte nby `AMQPX.Receiver`
+  * `:prefetch` – set the prefetch count; defaults to 1
+  * `:exchange` – the exchange to bind to. The exchange is expected to exist; set `:declare` to `true` to create it. Defaults to a durable topic exchange.
+  * `:queue` – the queue to consume from. Defaults to an anonymous auto-deleting queue.
+  * `:keys` – a set of routing keys to bind with and their corresponding handler modules. The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
+  * `:codecs` – override the default set of codecs; see the Codecs section for details
+  * `:supervisor` – the named `Task.Supervisor` to use for individual message handlers
+  """
+  @spec start_link([option]) :: {:ok, pid()}
   def start_link(args),
     do: GenServer.start_link(__MODULE__, args)
 
