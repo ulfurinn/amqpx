@@ -23,6 +23,10 @@ defmodule AMQPX.Receiver.Standard do
   @doc """
   Tells the receiver whether to requeue messages when `c:handle/2` crashes.
 
+  Be careful with choosing to always requeue. If the crash is not caused by some transient condition such as a lost database connection,
+  but a permanent one such as a bug in the message handler, this will cause the message to be redelivered indefinitely at the highest rate supported by your environment,
+  putting high load on the broker, the network, and the host running your application.
+
   Defaults to `false` if not implemented.
   """
   @callback requeue?() :: true | false | :once
@@ -35,11 +39,12 @@ defmodule AMQPX.Receiver.Standard do
   This server should not be started directly; use the `AMQPX.Receiver` supervisor instead.
 
   Each receiver sets up its own channel and makes sure it is disposed of when the receiver dies.
-  If you're implementing your own receiver, remember to use `AMQPX.link_channel/1` to avoid leaking channels with unacked messages on them, or even simply `Process.link/1`.
+
+  If you're implementing your own receiver, remember to clean up channels to avoid leaking resources and potentially leaving messages stuck in unacked state.
 
   Each receiver sets up a single queue and binds it with multiple routing keys, assigning to each key a handler module implementing the `AMQPX.Receiver.Standard` behaviour; read the callback documentation for details.
 
-  If the arriving message specifies `reply_to` and `correlation_id`, the result of the message handler (or its crash reason) will be sent as a reply message. This is designed to work transparently in conjunction with `AMQPX.RPC`.
+  If the arriving message sets the `reply_to` and `correlation_id` attributes, the result of the message handler (or its crash reason) will be sent as a reply message. This is designed to work transparently in conjunction with `AMQPX.RPC`.
 
   # Message handler lifetime
 
@@ -53,6 +58,10 @@ defmodule AMQPX.Receiver.Standard do
   `AMQPX` tries to separate message encoding and the business logic of message handlers with codecs.
 
   A codec is a module implementing the `AMQPX.Codec` behaviour. The only codec provided out of the box is `AMQPX.Codec.Text`.
+
+  `:text` is shorthand for "text/plain" and is handled by `AMQPX.Codec.Text` by default.
+
+  `:json` is recognised as shorthand for `application/json`, but no codec is included in `AMQPX`; however, both `Poison` and `Jason` can be used as codec modules directly if you bundle them in your application.
   """
 
   use GenServer
@@ -61,6 +70,7 @@ defmodule AMQPX.Receiver.Standard do
   defstruct [
     :conn,
     :ch,
+    :shared_ch,
     :ctag,
     :handlers,
     :task_sup,
@@ -126,7 +136,7 @@ defmodule AMQPX.Receiver.Standard do
 
     {:ok, conn} = AMQPX.ConnectionPool.get(Keyword.fetch!(args, :connection))
     {:ok, ch} = AMQP.Channel.open(conn)
-    AMQPX.link_channel(ch)
+    {:ok, shared_ch} = AMQPX.SharedChannel.start(ch)
     :ok = AMQP.Basic.qos(ch, prefetch_count: Keyword.get(args, :prefetch, 1))
 
     {ex_type, ex_name, ex_opts} =
@@ -165,6 +175,7 @@ defmodule AMQPX.Receiver.Standard do
     state = %__MODULE__{
       conn: conn,
       ch: ch,
+      shared_ch: shared_ch,
       ctag: ctag,
       handlers: Keyword.fetch!(args, :keys),
       codecs: Map.merge(default_codecs(), Keyword.get(args, :codecs, %{})),
@@ -235,10 +246,11 @@ defmodule AMQPX.Receiver.Standard do
     end
   end
 
-  defp handle_message(handler, payload, meta, state = %__MODULE__{ch: ch, task_sup: sup}) do
+  defp handle_message(handler, payload, meta, state = %__MODULE__{ch: ch, shared_ch: shared_ch, task_sup: sup}) do
     child = fn ->
       # make the task supervisor wait for us
       Process.flag(:trap_exit, true)
+      AMQPX.SharedChannel.share(shared_ch)
 
       {_, ref} =
         spawn_monitor(fn ->
