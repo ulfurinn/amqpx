@@ -178,7 +178,7 @@ defmodule AMQPX.Receiver.Standard do
       shared_ch: shared_ch,
       ctag: ctag,
       handlers: Keyword.fetch!(args, :keys),
-      codecs: Map.merge(default_codecs(), Keyword.get(args, :codecs, %{})),
+      codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor())
     }
 
@@ -246,7 +246,7 @@ defmodule AMQPX.Receiver.Standard do
     end
   end
 
-  defp handle_message(handler, payload, meta, state = %__MODULE__{ch: ch, shared_ch: shared_ch, task_sup: sup}) do
+  defp handle_message(handler, payload, meta, state = %__MODULE__{ch: ch, shared_ch: shared_ch, task_sup: sup, codecs: codecs}) do
     child = fn ->
       # make the task supervisor wait for us
       Process.flag(:trap_exit, true)
@@ -254,15 +254,8 @@ defmodule AMQPX.Receiver.Standard do
 
       {_, ref} =
         spawn_monitor(fn ->
-          codec =
-            case codec(meta, state) do
-              :handler -> handler
-              {:handler, args} -> {handler, args}
-              codec -> codec
-            end
-
+          {:ok, payload} = payload |> AMQPX.Codec.decode(meta, codecs, handler)
           payload
-          |> decode!(codec)
           |> handler.handle(meta)
           |> rpc_reply(handler, meta, state)
         end)
@@ -289,31 +282,23 @@ defmodule AMQPX.Receiver.Standard do
          data,
          handler,
          meta = %{reply_to: reply_to, correlation_id: correlation_id},
-         state = %__MODULE__{ch: ch}
+         state = %__MODULE__{ch: ch, codecs: codecs}
        )
        when is_binary(reply_to) do
     {mime, payload} =
       case handler.format_response(data, meta) do
-        m_p = {mime, _payload} when is_binary(mime) -> m_p
-        {mime, payload} when is_atom(mime) -> {mime_to_string(mime), payload}
+        {mime, payload} -> {mime, payload}
         payload when is_binary(payload) -> {"application/octet-stream", payload}
       end
 
-    codec =
-      case codec(meta, state) do
-        :handler -> handler
-        {:handler, args} -> {handler, args}
-        codec -> codec
-      end
-
-    payload = encode!(payload, codec)
+    {:ok, payload} = AMQPX.Codec.encode(payload, mime, codecs, handler)
 
     AMQP.Basic.publish(
       ch,
       "",
       reply_to,
       payload,
-      content_type: mime,
+      content_type: AMQPX.Codec.expand_mime_shortcut(mime),
       correlation_id: correlation_id
     )
   end
@@ -333,38 +318,4 @@ defmodule AMQPX.Receiver.Standard do
       false
     end
   end
-
-  defp mime_to_string(:json), do: "application/json"
-  defp mime_to_string(:text), do: "text/plain"
-  defp mime_to_string(_), do: "application/octet-stream"
-
-  defp default_codecs do
-    %{
-      "text/plain" => AMQPX.Receiver.Codec.Text,
-      "application/octet-stream" => AMQPX.Receiver.Codec.Text
-    }
-  end
-
-  defp codec(%{content_type: content_type}, state), do: codec(content_type, state)
-
-  defp codec(content_type, %__MODULE__{codecs: codecs}) when is_map(codecs),
-    do: Map.fetch!(codecs, content_type)
-
-  defp codec(_content_type, %__MODULE__{codecs: codec}) when is_atom(codec), do: codec
-
-  defp encode!(payload, nil), do: payload
-
-  defp encode!(payload, codec) when is_atom(codec),
-    do: codec.encode!(payload)
-
-  defp encode!(payload, {codec, args}) when is_atom(codec),
-    do: codec.encode!(payload, args)
-
-  defp decode!(payload, nil), do: payload
-
-  defp decode!(payload, codec) when is_atom(codec),
-    do: codec.decode!(payload)
-
-  defp decode!(payload, {codec, args}) when is_atom(codec),
-    do: codec.decode!(payload, args)
 end

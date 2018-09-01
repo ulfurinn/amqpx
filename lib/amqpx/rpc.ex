@@ -42,7 +42,7 @@ defmodule AMQPX.RPC do
       :exchange,
       :routing_key,
       :ctag,
-      :codec,
+      :codecs,
       :mime_type,
       :pending_calls
     ]
@@ -77,8 +77,8 @@ defmodule AMQPX.RPC do
         queue: queue,
         exchange: args[:exchange],
         routing_key: args[:routing_key],
-        codec: args[:codec] || AMQPX.Receiver.Codec.Text,
-        mime_type: args[:mime_type] || "application/octet-stream",
+        codecs: AMQPX.Codec.codecs(args[:codecs] || %{}),
+        mime_type: AMQPX.Codec.expand_mime_shortcut(args[:mime_type] || "application/octet-stream"),
         ctag: ctag,
         pending_calls: %{}
       }
@@ -90,7 +90,7 @@ defmodule AMQPX.RPC do
     def handle_call(
           {:call, exchange, routing_key, payload, timeout},
           from,
-          state = %__MODULE__{ch: ch}
+          state = %__MODULE__{ch: ch, mime_type: mime_type, codecs: codecs}
         ) do
       uuid = UUID.uuid4()
 
@@ -100,13 +100,15 @@ defmodule AMQPX.RPC do
            {:routing_key, true} <- {:routing_key, rk != nil} do
         call = %Call{caller: from, expire_at: Time.utc_now() |> Time.add(timeout, :millisecond)}
 
+        {:ok, payload} = AMQPX.Codec.encode(payload, mime_type, codecs)
+
         :ok =
           AMQP.Basic.publish(
             ch,
             ex,
             rk,
-            encode!(payload, state.codec),
-            content_type: state.mime_type,
+            payload,
+            content_type: mime_type,
             reply_to: state.queue,
             correlation_id: uuid
           )
@@ -127,14 +129,14 @@ defmodule AMQPX.RPC do
       {:noreply, state}
     end
 
-    def handle_info({:basic_deliver, payload, meta}, state = %__MODULE__{ch: ch}) do
+    def handle_info({:basic_deliver, payload, meta}, state = %__MODULE__{ch: ch, codecs: codecs}) do
       AMQP.Basic.ack(ch, meta.delivery_tag)
       id = meta.correlation_id
 
       case state.pending_calls do
         pending = %{^id => call} ->
-          parsed = decode!(payload, state.codec)
-          GenServer.reply(call.caller, {:ok, parsed})
+          parsed = AMQPX.Codec.decode(payload, meta, codecs)
+          GenServer.reply(call.caller, parsed)
           pending = Map.delete(pending, id)
           {:noreply, %__MODULE__{state | pending_calls: pending}}
 
@@ -164,21 +166,5 @@ defmodule AMQPX.RPC do
 
     defp schedule_cleanup,
       do: :erlang.send_after(60_000, self(), :cleanup)
-
-    defp encode!(payload, nil), do: payload
-
-    defp encode!(payload, mod) when is_atom(mod),
-      do: mod.encode!(payload)
-
-    defp encode!(payload, {mod, args}),
-      do: mod.encode!(payload, args)
-
-    defp decode!(payload, nil), do: payload
-
-    defp decode!(payload, mod) when is_atom(mod),
-      do: mod.decode!(payload)
-
-    defp decode!(payload, {mod, args}),
-      do: mod.decode!(payload, args)
   end
 end

@@ -5,4 +5,4 @@ config :ulfnet_amqpx,
     test: "amqp://guest:guest@localhost"
   }
 
-config :lager, handlers: []
+# config :lager, handlers: []

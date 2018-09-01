@@ -66,7 +66,7 @@ defmodule AMQPX.Test do
       connection: :test,
       exchange: "test",
       routing_key: "ok",
-      codec: Jason,
+      codecs: %{"application/json" => Jason},
       mime_type: "application/json"
     ]
   end
