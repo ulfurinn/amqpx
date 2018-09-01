@@ -246,7 +246,12 @@ defmodule AMQPX.Receiver.Standard do
     end
   end
 
-  defp handle_message(handler, payload, meta, state = %__MODULE__{ch: ch, shared_ch: shared_ch, task_sup: sup, codecs: codecs}) do
+  defp handle_message(
+         handler,
+         payload,
+         meta,
+         state = %__MODULE__{ch: ch, shared_ch: shared_ch, task_sup: sup, codecs: codecs}
+       ) do
     child = fn ->
       # make the task supervisor wait for us
       Process.flag(:trap_exit, true)
@@ -255,6 +260,7 @@ defmodule AMQPX.Receiver.Standard do
       {_, ref} =
         spawn_monitor(fn ->
           {:ok, payload} = payload |> AMQPX.Codec.decode(meta, codecs, handler)
+
           payload
           |> handler.handle(meta)
           |> rpc_reply(handler, meta, state)

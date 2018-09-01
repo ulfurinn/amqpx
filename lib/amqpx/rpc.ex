@@ -78,7 +78,8 @@ defmodule AMQPX.RPC do
         exchange: args[:exchange],
         routing_key: args[:routing_key],
         codecs: AMQPX.Codec.codecs(args[:codecs] || %{}),
-        mime_type: AMQPX.Codec.expand_mime_shortcut(args[:mime_type] || "application/octet-stream"),
+        mime_type:
+          AMQPX.Codec.expand_mime_shortcut(args[:mime_type] || "application/octet-stream"),
         ctag: ctag,
         pending_calls: %{}
       }

@@ -4,6 +4,7 @@ defmodule AMQPX.Codec do
     |> Map.merge(global_codecs())
     |> expand_mime_shortcut()
   end
+
   def codecs(custom_codecs) do
     default_codecs()
     |> Map.merge(global_codecs())
@@ -35,6 +36,7 @@ defmodule AMQPX.Codec do
 
   defp codec(%{content_type: content_type}, codecs),
     do: Map.get(codecs, expand_mime_shortcut(content_type))
+
   defp codec(content_type, codecs),
     do: Map.get(codecs, expand_mime_shortcut(content_type))
 
@@ -42,8 +44,10 @@ defmodule AMQPX.Codec do
     case codec(content_type, codecs) |> or_handler(handler) do
       nil ->
         {:error, {:no_codec, content_type}}
+
       codec when is_atom(codec) ->
         codec.encode(payload)
+
       {codec, args} ->
         apply(codec, :encode, [payload] ++ args)
     end
@@ -53,8 +57,10 @@ defmodule AMQPX.Codec do
     case codec(content_type, codecs) |> or_handler(handler) do
       nil ->
         {:error, {:no_codec, content_type}}
+
       codec when is_atom(codec) ->
         codec.decode(payload)
+
       {codec, args} ->
         apply(codec, :decode, [payload] ++ args)
     end

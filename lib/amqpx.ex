@@ -37,5 +37,4 @@ defmodule AMQPX do
       {:monitor_set_up, ^ref} -> :ok
     end
   end
-
 end

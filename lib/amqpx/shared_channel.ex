@@ -4,7 +4,7 @@ defmodule AMQPX.SharedChannel do
 
   defstruct [
     :ch,
-    :users,
+    :users
   ]
 
   def start(ch),
@@ -29,6 +29,7 @@ defmodule AMQPX.SharedChannel do
   def handle_info({:DOWN, _, _, pid, _}, state = %__MODULE__{users: users}) do
     users = MapSet.delete(users, pid)
     state = %__MODULE__{state | users: users}
+
     if MapSet.size(users) == 0 do
       {:stop, :normal, state}
     else
