@@ -14,8 +14,8 @@ defmodule AMQPX.Codec do
 
   def default_codecs() do
     %{
-      "text/plain" => AMQPX.Receiver.Codec.Text,
-      "application/octet-stream" => AMQPX.Receiver.Codec.Text
+      "text/plain" => AMQPX.Codec.Text,
+      "application/octet-stream" => AMQPX.Codec.Text
     }
   end
 
@@ -48,7 +48,7 @@ defmodule AMQPX.Codec do
       codec when is_atom(codec) ->
         codec.encode(payload)
 
-      {codec, args} ->
+      {codec, %{encode: args}} ->
         apply(codec, :encode, [payload] ++ args)
     end
   end
@@ -61,7 +61,7 @@ defmodule AMQPX.Codec do
       codec when is_atom(codec) ->
         codec.decode(payload)
 
-      {codec, args} ->
+      {codec, %{decode: args}} ->
         apply(codec, :decode, [payload] ++ args)
     end
   end
