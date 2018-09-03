@@ -74,7 +74,8 @@ defmodule AMQPX.Receiver.Standard do
     :ctag,
     :handlers,
     :task_sup,
-    :codecs
+    :codecs,
+    :mime_type
   ]
 
   @type exchange_option ::
@@ -179,6 +180,7 @@ defmodule AMQPX.Receiver.Standard do
       ctag: ctag,
       handlers: Keyword.fetch!(args, :keys),
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
+      mime_type: Keyword.get(args, :mime_type),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor())
     }
 
@@ -288,13 +290,13 @@ defmodule AMQPX.Receiver.Standard do
          data,
          handler,
          meta = %{reply_to: reply_to, correlation_id: correlation_id},
-         state = %__MODULE__{ch: ch, codecs: codecs}
+         state = %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type}
        )
        when is_binary(reply_to) do
     {mime, payload} =
       case handler.format_response(data, meta) do
         {mime, payload} -> {mime, payload}
-        payload when is_binary(payload) -> {"application/octet-stream", payload}
+        payload -> {default_mime_type || "application/octet-stream", payload}
       end
 
     {:ok, payload} = AMQPX.Codec.encode(payload, mime, codecs, handler)
