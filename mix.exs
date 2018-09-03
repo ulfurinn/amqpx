@@ -28,7 +28,7 @@ defmodule AMQPX.MixProject do
     [
       {:amqp, "~> 1.0"},
       {:uuid, "~> 1.1"},
-      {:jason, "~> 1.1", only: :test},
+      {:jason, "~> 1.1", only: :test, runtime: false},
       {:ex_doc, ex_doc_version(), only: :dev, runtime: false}
     ] ++ overrides()
   end
@@ -44,6 +44,6 @@ defmodule AMQPX.MixProject do
   end
 
   defp ex_doc_version() do
-    "~> 0.19-rc"
+    "~> 0.19.1"
   end
 end
