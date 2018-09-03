@@ -19,6 +19,14 @@ defmodule AMQPX.Receiver do
           | {:max_restarts, integer()}
           | {:max_seconds, integer()}
 
+  def child_spec(args) do
+    %{
+      id: Keyword.get(args, :id, __MODULE__),
+      start: {__MODULE__, :start_link, [args]},
+      type: :supervisor
+    }
+  end
+
   @doc """
   Starts the process group.
 
