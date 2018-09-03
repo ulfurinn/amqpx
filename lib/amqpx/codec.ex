@@ -50,6 +50,9 @@ defmodule AMQPX.Codec do
 
       {codec, %{encode: args}} ->
         apply(codec, :encode, [payload] ++ args)
+
+      {codec, _} ->
+        codec.encode(payload)
     end
   end
 
@@ -63,6 +66,9 @@ defmodule AMQPX.Codec do
 
       {codec, %{decode: args}} ->
         apply(codec, :decode, [payload] ++ args)
+
+      {codec, _} ->
+        codec.decode(payload)
     end
   end
 

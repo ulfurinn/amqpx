@@ -308,6 +308,7 @@ defmodule AMQPX.Receiver.Standard do
       correlation_id: correlation_id
     )
   end
+
   defp rpc_reply(_, _, _, _), do: nil
 
   defp ack(ch, %{delivery_tag: dtag}), do: AMQP.Basic.ack(ch, dtag)
