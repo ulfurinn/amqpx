@@ -9,6 +9,14 @@ defmodule AMQPX.Publisher do
     :storage_state
   ]
 
+  def child_spec(args) do
+    %{
+      id: Keyword.get(args, :id, __MODULE__),
+      start: {__MODULE__, :start_link, [args]},
+      shutdown: Keyword.get(args, :shutdown, :infinity)
+    }
+  end
+
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
 

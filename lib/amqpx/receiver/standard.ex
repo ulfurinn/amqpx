@@ -108,9 +108,9 @@ defmodule AMQPX.Receiver.Standard do
   @doc false
   def child_spec(args) do
     %{
-      id: :id,
+      id: Keyword.get(args, :id, __MODULE__),
       start: {__MODULE__, :start_link, [args]},
-      shutdown: :infinity
+      shutdown: Keyword.get(args, :shutdown, :infinity)
     }
   end
 
