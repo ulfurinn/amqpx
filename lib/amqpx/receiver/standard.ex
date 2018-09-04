@@ -104,6 +104,7 @@ defmodule AMQPX.Receiver.Standard do
           | {:keys, %{(routing_key :: String.t()) => handler :: module()}}
           | {:codecs, %{(mime_type :: String.t()) => :handler | codec :: module()}}
           | {:supervisor, atom()}
+          | {:name, atom()}
 
   @doc false
   def child_spec(args) do
@@ -119,17 +120,23 @@ defmodule AMQPX.Receiver.Standard do
 
   ## Options
 
-  * `:connection` – do not pass directly, it will be overwritte nby `AMQPX.Receiver`
+  * `:connection` – do not pass directly, it will be overwritten by `AMQPX.Receiver`
   * `:prefetch` – set the prefetch count; defaults to 1
   * `:exchange` – the exchange to bind to. The exchange is expected to exist; set `:declare` to `true` to create it. Defaults to a durable topic exchange.
   * `:queue` – the queue to consume from. Defaults to an anonymous auto-deleting queue.
   * `:keys` – a set of routing keys to bind with and their corresponding handler modules. The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
   * `:codecs` – override the default set of codecs; see the Codecs section for details
   * `:supervisor` – the named `Task.Supervisor` to use for individual message handlers
+  * `:name` – the name to register the process with
   """
   @spec start_link([option]) :: {:ok, pid()}
-  def start_link(args),
-    do: GenServer.start_link(__MODULE__, args)
+  def start_link(args) do
+    case Keyword.get(args, :name) do
+      nil -> GenServer.start_link(__MODULE__, args)
+      name when is_atom(name) -> GenServer.start_link(__MODULE__, args, name: name)
+      _ -> GenServer.start_link(__MODULE__, args)
+    end
+  end
 
   @impl GenServer
   def init(args) do
@@ -314,8 +321,10 @@ defmodule AMQPX.Receiver.Standard do
   defp rpc_reply(_, _, _, _), do: nil
 
   defp ack(ch, %{delivery_tag: dtag}), do: AMQP.Basic.ack(ch, dtag)
+  defp ack(_, _), do: nil
 
   defp reject(ch, %{delivery_tag: dtag}, opts), do: AMQP.Basic.reject(ch, dtag, opts)
+  defp reject(_, _, _), do: nil
 
   defp requeue?(mod, %{redelivered: redelivered}) do
     if :erlang.function_exported(mod, :requeue?, 0) do
