@@ -261,11 +261,11 @@ defmodule AMQPX.Receiver.Standard do
 
       {_, ref} =
         spawn_monitor(fn ->
-          {:ok, payload} = payload |> AMQPX.Codec.decode(meta, codecs, handler)
-
-          payload
-          |> handler.handle(meta)
-          |> rpc_reply(handler, meta, state)
+          result = case payload |> AMQPX.Codec.decode(meta, codecs, handler) do
+            {:ok, payload} -> payload |> handler.handle(meta)
+            error -> error
+          end
+          result |> rpc_reply(handler, meta, state)
         end)
 
       receive do
