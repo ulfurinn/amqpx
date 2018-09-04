@@ -299,7 +299,7 @@ defmodule AMQPX.Receiver.Standard do
          meta = %{reply_to: reply_to, correlation_id: correlation_id},
          state = %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type}
        )
-       when is_binary(reply_to) || is_pid(reply_to) do
+       when is_binary(reply_to) or is_pid(reply_to) do
     {mime, payload} =
       case handler.format_response(data, meta) do
         {mime, payload} -> {mime, payload}
