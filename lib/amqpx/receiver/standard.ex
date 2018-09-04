@@ -299,7 +299,7 @@ defmodule AMQPX.Receiver.Standard do
          meta = %{reply_to: reply_to, correlation_id: correlation_id},
          state = %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type}
        )
-       when is_binary(reply_to) do
+       when is_binary(reply_to) || is_pid(reply_to) do
     {mime, payload} =
       case handler.format_response(data, meta) do
         {mime, payload} -> {mime, payload}
@@ -308,17 +308,16 @@ defmodule AMQPX.Receiver.Standard do
 
     {:ok, payload} = AMQPX.Codec.encode(payload, mime, codecs, handler)
 
-    AMQP.Basic.publish(
-      ch,
-      "",
-      reply_to,
-      payload,
-      content_type: AMQPX.Codec.expand_mime_shortcut(mime),
-      correlation_id: correlation_id
-    )
+    send_response(ch, reply_to, payload, AMQPX.Codec.expand_mime_shortcut(mime), correlation_id)
   end
 
   defp rpc_reply(_, _, _, _), do: nil
+
+  defp send_response(ch, queue, payload, content_type, correlation_id),
+    do: AMQP.Basic.publish(ch, "", queue, payload, content_type: content_type, correlation_id: correlation_id)
+
+  defp send_response(_, pid, payload, _, _) when is_pid(pid), do: send(pid, payload)
+
 
   defp ack(ch, %{delivery_tag: dtag}), do: AMQP.Basic.ack(ch, dtag)
   defp ack(_, _), do: nil
