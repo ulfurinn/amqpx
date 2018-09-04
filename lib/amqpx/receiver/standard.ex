@@ -313,7 +313,7 @@ defmodule AMQPX.Receiver.Standard do
 
   defp rpc_reply(_, _, _, _), do: nil
 
-  defp send_response(ch, queue, payload, content_type, correlation_id),
+  defp send_response(ch, queue, payload, content_type, correlation_id) when is_binary(queue),
     do: AMQP.Basic.publish(ch, "", queue, payload, content_type: content_type, correlation_id: correlation_id)
 
   defp send_response(_, pid, payload, _, _) when is_pid(pid), do: send(pid, payload)
