@@ -31,7 +31,9 @@ defmodule AMQPX.Receiver.Standard do
   """
   @callback requeue?() :: true | false | :once
 
-  @optional_callbacks requeue?: 0
+  @callback handling_node(payload :: any(), meta :: Map.t()) :: atom()
+
+  @optional_callbacks requeue?: 0, handling_node: 2
 
   @moduledoc """
   A message handler implementing some sane defaults.
@@ -68,6 +70,7 @@ defmodule AMQPX.Receiver.Standard do
   require Logger
 
   defstruct [
+    :name,
     :conn,
     :ch,
     :shared_ch,
@@ -89,6 +92,7 @@ defmodule AMQPX.Receiver.Standard do
 
   @type option ::
           {:connection, connection_id :: atom()}
+          | {:name, atom()}
           | {:prefetch, integer()}
           | {:exchange,
              {type :: atom(), name :: String.t(), opts :: [exchange_option]}
@@ -132,15 +136,26 @@ defmodule AMQPX.Receiver.Standard do
   @spec start_link([option]) :: {:ok, pid()}
   def start_link(args) do
     case Keyword.get(args, :name) do
-      nil -> GenServer.start_link(__MODULE__, args)
-      name when is_atom(name) -> GenServer.start_link(__MODULE__, args, name: name)
-      _ -> GenServer.start_link(__MODULE__, args)
+      name when is_atom(name) and name != nil ->
+        GenServer.start_link(__MODULE__, args, name: name)
+
+      _ ->
+        GenServer.start_link(__MODULE__, args)
     end
   end
+
+  def handle_handover(name, request),
+    do: GenServer.call(name, {:handle_handover, request}, :infinity)
 
   @impl GenServer
   def init(args) do
     Process.flag(:trap_exit, true)
+
+    name =
+      case :erlang.process_info(self(), :registered_name) do
+        {:registered_name, name} -> name
+        _ -> nil
+      end
 
     {:ok, conn} = AMQPX.ConnectionPool.get(Keyword.fetch!(args, :connection))
     {:ok, ch} = AMQP.Channel.open(conn)
@@ -181,6 +196,7 @@ defmodule AMQPX.Receiver.Standard do
     {:ok, ctag} = AMQP.Basic.consume(ch, queue)
 
     state = %__MODULE__{
+      name: name,
       conn: conn,
       ch: ch,
       shared_ch: shared_ch,
@@ -192,6 +208,38 @@ defmodule AMQPX.Receiver.Standard do
     }
 
     {:ok, state}
+  end
+
+  @impl GenServer
+  def handle_call(
+        {:handle_handover, {handler, payload, meta}},
+        from,
+        state = %__MODULE__{shared_ch: shared_ch, task_sup: sup}
+      ) do
+    receiver = self()
+    share_ref = make_ref()
+
+    child = fn ->
+      Process.flag(:trap_exit, true)
+      AMQPX.SharedChannel.share(shared_ch)
+      send(receiver, {:share_acquired, share_ref})
+
+      payload
+      |> handler.handle(meta)
+      |> rpc_reply(handler, meta, state)
+
+      GenServer.reply(from, :ok)
+    end
+
+    Task.Supervisor.start_child(sup, child)
+
+    receive do
+      {:share_acquired, ^share_ref} ->
+        :ok
+        # TODO: what to do if it crashes before it can send?
+    end
+
+    {:noreply, state}
   end
 
   @impl GenServer
@@ -259,20 +307,53 @@ defmodule AMQPX.Receiver.Standard do
          handler,
          payload,
          meta,
-         state = %__MODULE__{ch: ch, shared_ch: shared_ch, task_sup: sup, codecs: codecs}
+         state = %__MODULE__{
+           name: name,
+           ch: ch,
+           shared_ch: shared_ch,
+           task_sup: sup,
+           codecs: codecs
+         }
        ) do
+    receiver = self()
+    share_ref = make_ref()
+
     child = fn ->
       # make the task supervisor wait for us
       Process.flag(:trap_exit, true)
       AMQPX.SharedChannel.share(shared_ch)
+      send(receiver, {:share_acquired, share_ref})
 
       {_, ref} =
         spawn_monitor(fn ->
-          result = case payload |> AMQPX.Codec.decode(meta, codecs, handler) do
-            {:ok, payload} -> payload |> handler.handle(meta)
-            error -> error
+          case payload |> AMQPX.Codec.decode(meta, codecs, handler) do
+            {:ok, payload} ->
+              # We only support handover if the process is named, and we assume it to have the same name on all nodes.
+              # Otherwise we don't know who to talk to on the remote node.
+              node =
+                if name != nil && :erlang.function_exported(handler, :handling_node, 2) do
+                  handler.handling_node(payload, meta)
+                else
+                  Node.self()
+                end
+
+              if node == Node.self() do
+                payload
+                |> handler.handle(meta)
+                |> rpc_reply(handler, meta, state)
+              else
+                case :rpc.call(node, __MODULE__, :handle_handover, [
+                       name,
+                       {handler, payload, meta}
+                     ]) do
+                  error = {:badrpc, _} -> exit(error)
+                  _ -> :ok
+                end
+              end
+
+            error ->
+              rpc_reply(error, handler, meta, state)
           end
-          result |> rpc_reply(handler, meta, state)
         end)
 
       receive do
@@ -280,7 +361,12 @@ defmodule AMQPX.Receiver.Standard do
           ack(ch, meta)
 
         {:DOWN, ^ref, _, _, reason} ->
-          requeue = requeue?(handler, meta)
+          requeue =
+            case reason do
+              {:badrpc, _} -> true
+              _ -> requeue?(handler, meta)
+            end
+
           reject(ch, meta, requeue: requeue)
 
           if not requeue,
@@ -289,6 +375,12 @@ defmodule AMQPX.Receiver.Standard do
     end
 
     Task.Supervisor.start_child(sup, child)
+
+    receive do
+      {:share_acquired, ^share_ref} ->
+        :ok
+        # TODO: what to do if it crashes before it can send?
+    end
   end
 
   defp rpc_reply(data, handler, meta, state)
@@ -297,7 +389,7 @@ defmodule AMQPX.Receiver.Standard do
          data,
          handler,
          meta = %{reply_to: reply_to, correlation_id: correlation_id},
-         state = %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type}
+         %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type}
        )
        when is_binary(reply_to) or is_pid(reply_to) do
     {mime, payload} =
@@ -314,10 +406,13 @@ defmodule AMQPX.Receiver.Standard do
   defp rpc_reply(_, _, _, _), do: nil
 
   defp send_response(ch, queue, payload, content_type, correlation_id) when is_binary(queue),
-    do: AMQP.Basic.publish(ch, "", queue, payload, content_type: content_type, correlation_id: correlation_id)
+    do:
+      AMQP.Basic.publish(ch, "", queue, payload,
+        content_type: content_type,
+        correlation_id: correlation_id
+      )
 
   defp send_response(_, pid, payload, _, _) when is_pid(pid), do: send(pid, payload)
-
 
   defp ack(ch, %{delivery_tag: dtag}), do: AMQP.Basic.ack(ch, dtag)
   defp ack(_, _), do: nil
