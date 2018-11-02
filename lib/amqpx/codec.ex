@@ -34,8 +34,10 @@ defmodule AMQPX.Codec do
   def expand_mime_shortcut(:text), do: "text/plain"
   def expand_mime_shortcut(:binary), do: "application/octet-stream"
 
-  defp codec(%{content_type: content_type}, codecs),
+  defp codec(%{content_type: content_type}, codecs) when content_type != :undefined,
     do: Map.get(codecs, expand_mime_shortcut(content_type))
+  defp codec(%{}, codecs),
+    do: Map.get(codecs, expand_mime_shortcut(:binary))
 
   defp codec(content_type, codecs),
     do: Map.get(codecs, expand_mime_shortcut(content_type))
