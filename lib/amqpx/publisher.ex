@@ -6,7 +6,8 @@ defmodule AMQPX.Publisher do
     :conn_name,
     :ch,
     :storage_mod,
-    :storage_state
+    :storage_state,
+    {:exchanges, []}
   ]
 
   def child_spec(args) do
@@ -27,9 +28,10 @@ defmodule AMQPX.Publisher do
   def init(opts) do
     conn = opts |> Keyword.fetch!(:connection)
     storage = opts |> Keyword.fetch!(:storage)
+    exchanges = opts[:exchanges] || []
 
     state =
-      %__MODULE__{conn_name: conn, storage_mod: storage, storage_state: init_storage(storage)}
+      %__MODULE__{conn_name: conn, storage_mod: storage, storage_state: init_storage(storage), exchanges: exchanges}
       |> connect
 
     {:ok, state}
@@ -73,7 +75,7 @@ defmodule AMQPX.Publisher do
   defp connect(state = %__MODULE__{conn_name: conn_name}) do
     case AMQPX.ConnectionPool.get(conn_name) do
       {:ok, conn} ->
-        %__MODULE__{state | ch: init_channel(conn)}
+        %__MODULE__{state | ch: init_channel(conn, state)}
         |> resend
 
       err ->
@@ -83,10 +85,10 @@ defmodule AMQPX.Publisher do
     end
   end
 
-  defp init_channel(conn) do
+  defp init_channel(conn, state) do
     case conn |> AMQP.Channel.open() do
       {:ok, ch} ->
-        ch |> configure_channel()
+        ch |> configure_channel(state)
 
       err ->
         Logger.error(inspect(err))
@@ -95,13 +97,19 @@ defmodule AMQPX.Publisher do
     end
   end
 
-  defp configure_channel(nil), do: nil
+  defp configure_channel(nil, _), do: nil
 
-  defp configure_channel(ch) do
+  defp configure_channel(ch, %__MODULE__{exchanges: exchanges}) do
     Process.monitor(ch.pid)
     AMQP.Confirm.select(ch)
     :amqp_channel.register_confirm_handler(ch.pid, self())
     :amqp_channel.register_return_handler(ch.pid, self())
+    exchanges |> Enum.each(fn exchange ->
+      type = Keyword.fetch!(exchange, :type)
+      name = Keyword.fetch!(exchange, :name)
+      opts = Keyword.fetch!(exchange, :options)
+      apply(AMQP.Exchange, type, [ch, name, opts])
+    end)
     ch
   end
 
