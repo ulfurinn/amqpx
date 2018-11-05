@@ -78,7 +78,8 @@ defmodule AMQPX.Receiver.Standard do
     :handlers,
     :task_sup,
     :codecs,
-    :mime_type
+    :mime_type,
+    {:log_traffic, false}
   ]
 
   @type exchange_option ::
@@ -109,6 +110,7 @@ defmodule AMQPX.Receiver.Standard do
           | {:codecs, %{(mime_type :: String.t()) => :handler | codec :: module()}}
           | {:supervisor, atom()}
           | {:name, atom()}
+          | {:log_traffic, boolean()}
 
   @doc false
   def child_spec(args) do
@@ -204,7 +206,8 @@ defmodule AMQPX.Receiver.Standard do
       handlers: Keyword.fetch!(args, :keys),
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       mime_type: Keyword.get(args, :mime_type),
-      task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor())
+      task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
+      log_traffic: Keyword.get(args, :log_traffic, false)
     }
 
     {:ok, state}
@@ -293,12 +296,22 @@ defmodule AMQPX.Receiver.Standard do
     nil
   end
 
-  defp handle_message(payload, meta = %{routing_key: rk}, state = %__MODULE__{handlers: handlers}) do
+  defp handle_message(
+         payload,
+         meta = %{routing_key: rk},
+         state = %__MODULE__{handlers: handlers, log_traffic: log}
+       ) do
+    if log,
+      do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
+
     case handlers do
       %{^rk => handler} ->
         handle_message(handler, payload, meta, state)
 
       _ ->
+        if log,
+          do: Logger.info(["IGNR | ", inspect(meta)])
+
         nil
     end
   end
@@ -389,7 +402,7 @@ defmodule AMQPX.Receiver.Standard do
          data,
          handler,
          meta = %{reply_to: reply_to, correlation_id: correlation_id},
-         %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type}
+         %__MODULE__{ch: ch, codecs: codecs, mime_type: default_mime_type, log_traffic: log}
        )
        when is_binary(reply_to) or is_pid(reply_to) do
     {mime, payload} =
@@ -399,6 +412,9 @@ defmodule AMQPX.Receiver.Standard do
       end
 
     {:ok, payload} = AMQPX.Codec.encode(payload, mime, codecs, handler)
+
+    if log,
+      do: Logger.info(["SEND ", payload, " | ", meta])
 
     send_response(ch, reply_to, payload, AMQPX.Codec.expand_mime_shortcut(mime), correlation_id)
   end

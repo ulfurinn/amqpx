@@ -31,7 +31,12 @@ defmodule AMQPX.Publisher do
     exchanges = opts[:exchanges] || []
 
     state =
-      %__MODULE__{conn_name: conn, storage_mod: storage, storage_state: init_storage(storage), exchanges: exchanges}
+      %__MODULE__{
+        conn_name: conn,
+        storage_mod: storage,
+        storage_state: init_storage(storage),
+        exchanges: exchanges
+      }
       |> connect
 
     {:ok, state}
@@ -104,12 +109,15 @@ defmodule AMQPX.Publisher do
     AMQP.Confirm.select(ch)
     :amqp_channel.register_confirm_handler(ch.pid, self())
     :amqp_channel.register_return_handler(ch.pid, self())
-    exchanges |> Enum.each(fn exchange ->
+
+    exchanges
+    |> Enum.each(fn exchange ->
       type = Keyword.fetch!(exchange, :type)
       name = Keyword.fetch!(exchange, :name)
       opts = Keyword.fetch!(exchange, :options)
       apply(AMQP.Exchange, type, [ch, name, opts])
     end)
+
     ch
   end
 

@@ -36,6 +36,7 @@ defmodule AMQPX.Codec do
 
   defp codec(%{content_type: content_type}, codecs) when content_type != :undefined,
     do: Map.get(codecs, expand_mime_shortcut(content_type))
+
   defp codec(%{}, codecs),
     do: Map.get(codecs, expand_mime_shortcut(:binary))
 
