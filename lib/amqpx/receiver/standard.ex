@@ -79,7 +79,8 @@ defmodule AMQPX.Receiver.Standard do
     :task_sup,
     :codecs,
     :mime_type,
-    {:log_traffic, false}
+    {:log_traffic, false},
+    {:measurer, nil}
   ]
 
   @type exchange_option ::
@@ -111,6 +112,7 @@ defmodule AMQPX.Receiver.Standard do
           | {:supervisor, atom()}
           | {:name, atom()}
           | {:log_traffic, boolean()}
+          | {:measurer, module()}
 
   @doc false
   def child_spec(args) do
@@ -207,7 +209,8 @@ defmodule AMQPX.Receiver.Standard do
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       mime_type: Keyword.get(args, :mime_type),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
-      log_traffic: Keyword.get(args, :log_traffic, false)
+      log_traffic: Keyword.get(args, :log_traffic, false),
+      measurer: Keyword.get(args, :measurer, nil)
     }
 
     {:ok, state}
@@ -321,11 +324,10 @@ defmodule AMQPX.Receiver.Standard do
          payload,
          meta,
          state = %__MODULE__{
-           name: name,
            ch: ch,
            shared_ch: shared_ch,
            task_sup: sup,
-           codecs: codecs
+           measurer: measurer
          }
        ) do
     receiver = self()
@@ -337,37 +339,16 @@ defmodule AMQPX.Receiver.Standard do
       AMQPX.SharedChannel.share(shared_ch)
       send(receiver, {:share_acquired, share_ref})
 
-      {_, ref} =
-        spawn_monitor(fn ->
-          case payload |> AMQPX.Codec.decode(meta, codecs, handler) do
-            {:ok, payload} ->
-              # We only support handover if the process is named, and we assume it to have the same name on all nodes.
-              # Otherwise we don't know who to talk to on the remote node.
-              node =
-                if name != nil && :erlang.function_exported(handler, :handling_node, 2) do
-                  handler.handling_node(payload, meta)
-                else
-                  Node.self()
-                end
+      handler_fn = handler_fn(handler, payload, meta, state)
 
-              if node == Node.self() do
-                payload
-                |> handler.handle(meta)
-                |> rpc_reply(handler, meta, state)
-              else
-                case :rpc.call(node, __MODULE__, :handle_handover, [
-                       name,
-                       {handler, payload, meta}
-                     ]) do
-                  error = {:badrpc, _} -> exit(error)
-                  _ -> :ok
-                end
-              end
+      child_fn =
+        if measurer do
+          fn -> measurer.measure_packet_handler(handler_fn, meta) end
+        else
+          handler_fn
+        end
 
-            error ->
-              rpc_reply(error, handler, meta, state)
-          end
-        end)
+      {_, ref} = spawn_monitor(child_fn)
 
       receive do
         {:DOWN, ^ref, _, _, :normal} ->
@@ -393,6 +374,47 @@ defmodule AMQPX.Receiver.Standard do
       {:share_acquired, ^share_ref} ->
         :ok
         # TODO: what to do if it crashes before it can send?
+    end
+  end
+
+  defp handler_fn(
+         handler,
+         payload,
+         meta,
+         state = %__MODULE__{
+           name: name,
+           codecs: codecs
+         }
+       ) do
+    fn ->
+      case payload |> AMQPX.Codec.decode(meta, codecs, handler) do
+        {:ok, payload} ->
+          # We only support handover if the process is named, and we assume it to have the same name on all nodes.
+          # Otherwise we don't know who to talk to on the remote node.
+          node =
+            if name != nil && :erlang.function_exported(handler, :handling_node, 2) do
+              handler.handling_node(payload, meta)
+            else
+              Node.self()
+            end
+
+          if node == Node.self() do
+            payload
+            |> handler.handle(meta)
+            |> rpc_reply(handler, meta, state)
+          else
+            case :rpc.call(node, __MODULE__, :handle_handover, [
+                   name,
+                   {handler, payload, meta}
+                 ]) do
+              error = {:badrpc, _} -> exit(error)
+              _ -> :ok
+            end
+          end
+
+        error ->
+          rpc_reply(error, handler, meta, state)
+      end
     end
   end
 
