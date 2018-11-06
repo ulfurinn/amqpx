@@ -436,7 +436,7 @@ defmodule AMQPX.Receiver.Standard do
     {:ok, payload} = AMQPX.Codec.encode(payload, mime, codecs, handler)
 
     if log,
-      do: Logger.info(["SEND ", payload, " | ", meta])
+      do: Logger.info(["SEND ", payload, " | ", inspect(meta)])
 
     send_response(ch, reply_to, payload, AMQPX.Codec.expand_mime_shortcut(mime), correlation_id)
   end
