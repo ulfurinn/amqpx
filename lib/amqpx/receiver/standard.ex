@@ -429,7 +429,7 @@ defmodule AMQPX.Receiver.Standard do
        when is_binary(reply_to) or is_pid(reply_to) do
     {mime, payload} =
       case handler.format_response(data, meta) do
-        {mime, payload} -> {mime, payload}
+        {{:mime_type, mime}, payload} -> {mime, payload}
         payload -> {default_mime_type || "application/octet-stream", payload}
       end
 
