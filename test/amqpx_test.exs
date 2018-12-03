@@ -110,6 +110,6 @@ defmodule AMQPX.Test do
 
     def handle([input], _meta), do: [input * 10]
 
-    def format_response(resp, _meta), do: {:json, resp}
+    def format_response(resp, _meta), do: {{:mime_type, :json}, resp}
   end
 end

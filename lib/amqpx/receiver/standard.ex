@@ -175,7 +175,7 @@ defmodule AMQPX.Receiver.Standard do
 
     case Keyword.pop(ex_opts, :declare) do
       {true, ex_opts} ->
-        :ok = apply(AMQP.Exchange, ex_type, [ch, ex_name, ex_opts])
+        :ok = AMQP.Exchange.declare(ch, ex_name, ex_type, ex_opts)
 
       _ ->
         nil
