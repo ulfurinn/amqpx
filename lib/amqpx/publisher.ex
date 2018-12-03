@@ -115,7 +115,7 @@ defmodule AMQPX.Publisher do
       type = Keyword.fetch!(exchange, :type)
       name = Keyword.fetch!(exchange, :name)
       opts = Keyword.fetch!(exchange, :options)
-      apply(AMQP.Exchange, type, [ch, name, opts])
+      AMQP.Exchange.declare(ch, name, type, opts)
     end)
 
     ch
