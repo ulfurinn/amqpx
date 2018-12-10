@@ -26,21 +26,11 @@ defmodule AMQPX.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:amqp, "~> 1.0"},
+      {:amqp, "~> 1.1.0"},
       {:uuid, "~> 1.1"},
       {:jason, "~> 1.1", only: :test, runtime: false},
       {:ex_doc, ex_doc_version(), only: :dev, runtime: false}
-    ] ++ overrides()
-  end
-
-  defp overrides do
-    :code.ensure_loaded(:ssl)
-    # a hack to be compatible with OTP 21 until it is properly resolved upstream
-    if Kernel.function_exported?(:ssl, :handshake, 3) do
-      [{:ranch_proxy_protocol, "~> 2.0.0", override: true}]
-    else
-      []
-    end
+    ]
   end
 
   defp ex_doc_version() do
