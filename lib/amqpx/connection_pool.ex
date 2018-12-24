@@ -31,9 +31,9 @@ defmodule AMQPX.ConnectionPool do
     do: GenServer.start(__MODULE__, nil, name: __MODULE__)
 
   @doc "Fetch a connection by its name."
-  @spec get(name :: atom()) :: {:ok, AMQP.Connection.t()} | {:error, reason :: any()}
-  def get(name),
-    do: GenServer.call(__MODULE__, {:get, name})
+  @spec get(name :: atom(), timeout :: integer() | :infinity) :: {:ok, AMQP.Connection.t()} | {:error, reason :: any()}
+  def get(name, timeout \\ :infinity),
+    do: GenServer.call(__MODULE__, {:get, name}, timeout)
 
   @doc "Register a connection config outside of `sys.config`."
   @spec register(name :: atom(), url :: any()) :: any()
