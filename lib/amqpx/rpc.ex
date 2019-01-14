@@ -27,11 +27,11 @@ defmodule AMQPX.RPC do
     )
   end
 
-  def call(server, payload, timeout),
-    do: GenServer.call(server, {:call, nil, nil, payload, timeout}, timeout)
+  def call(server, payload, options \\ [], timeout),
+    do: GenServer.call(server, {:call, nil, nil, payload, options, timeout}, timeout)
 
-  def call(server, exchange, routing_key, payload, timeout),
-    do: GenServer.call(server, {:call, exchange, routing_key, payload, timeout}, timeout)
+  def call(server, exchange, routing_key, payload, options \\ [], timeout),
+    do: GenServer.call(server, {:call, exchange, routing_key, payload, options, timeout}, timeout)
 
   defmodule Worker do
     use GenServer
@@ -89,7 +89,7 @@ defmodule AMQPX.RPC do
 
     @impl GenServer
     def handle_call(
-          {:call, exchange, routing_key, payload, timeout},
+          {:call, exchange, routing_key, payload, options, timeout},
           from,
           state = %__MODULE__{ch: ch, mime_type: mime_type, codecs: codecs}
         ) do
@@ -103,6 +103,8 @@ defmodule AMQPX.RPC do
 
         {:ok, payload} = AMQPX.Codec.encode(payload, mime_type, codecs)
 
+        headers = Keyword.get(options, :headers, [])
+
         :ok =
           AMQP.Basic.publish(
             ch,
@@ -111,7 +113,8 @@ defmodule AMQPX.RPC do
             payload,
             content_type: mime_type,
             reply_to: state.queue,
-            correlation_id: uuid
+            correlation_id: uuid,
+            headers: headers
           )
 
         pending = Map.put(state.pending_calls, uuid, call)
