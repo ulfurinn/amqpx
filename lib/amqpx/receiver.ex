@@ -53,6 +53,10 @@ defmodule AMQPX.Receiver do
   @impl Supervisor
   def init(args) do
     worker_args = Keyword.get(args, :worker, [])
+    case Keyword.get(args, :supervisor_name) do
+      nil -> :ok
+      name -> Process.register(self(), name)
+    end
 
     children = [
       {AMQPX.Watchdog, args},
