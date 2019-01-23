@@ -49,10 +49,16 @@ defmodule AMQPX.Publisher do
     storage = opts |> Keyword.fetch!(:storage)
     exchanges = opts[:exchanges] || []
 
+    storage_mod =
+      case storage do
+        mod when is_atom(mod) -> mod
+        {mod, _} when is_atom(mod) -> mod
+      end
+
     state =
       %__MODULE__{
         conn_name: conn,
-        storage_mod: storage,
+        storage_mod: storage_mod,
         storage_state: init_storage(storage),
         exchanges: exchanges
       }

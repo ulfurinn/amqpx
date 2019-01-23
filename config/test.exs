@@ -6,4 +6,4 @@ config :ulfnet_amqpx,
     publish: "amqp://guest:guest@localhost"
   }
 
-# config :lager, handlers: []
+config :lager, handlers: []

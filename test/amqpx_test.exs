@@ -28,7 +28,7 @@ defmodule AMQPX.Test do
     end
   end
 
-  test "can send a message using the confirming publisher" do
+  test "can send a message using the confirming publisher with the memory backend" do
     {:ok, _} = AMQPX.Receiver.start_link(receiver_args())
 
     {:ok, _} =
@@ -41,7 +41,7 @@ defmodule AMQPX.Test do
     {:ok, %{queue: queue}} = AMQP.Queue.declare(ch(), "", auto_delete: true)
     {:ok, _} = AMQP.Basic.consume(ch(), queue)
 
-    message_count = 40
+    message_count = 100
 
     spawn(fn ->
       1..message_count
@@ -61,7 +61,11 @@ defmodule AMQPX.Test do
       end)
     end)
 
-    Process.sleep(1000)
+    Process.sleep(3000)
+    {:ok, %{pid: pid}} = AMQPX.ConnectionPool.get(:publish)
+    :erlang.exit(pid, :kill_connection)
+
+    Process.sleep(3000)
     {:ok, %{pid: pid}} = AMQPX.ConnectionPool.get(:publish)
     :erlang.exit(pid, :kill_connection)
 
@@ -74,6 +78,61 @@ defmodule AMQPX.Test do
 
           if payload != "[#{i * 10}]" do
             flunk("out of order")
+          end
+      end
+    end)
+  end
+
+  test "can send a message using the confirming publisher with the DETS backend" do
+    {:ok, _} = AMQPX.Receiver.start_link(receiver_args())
+
+    {:ok, _} =
+      AMQPX.Publisher.start_link(
+        name: :publisher,
+        connection: :publish,
+        storage: {AMQPX.Publisher.Storage.DETS, "publisher.dets"}
+      )
+
+    {:ok, %{queue: queue}} = AMQP.Queue.declare(ch(), "", auto_delete: true)
+    {:ok, _} = AMQP.Basic.consume(ch(), queue)
+
+    message_count = 100
+
+    spawn(fn ->
+      1..message_count
+      |> Enum.each(fn i ->
+        :ok =
+          AMQPX.Publisher.publish(
+            :publisher,
+            "test",
+            "ok",
+            "[#{i}]",
+            reply_to: queue,
+            correlation_id: "dead-beef",
+            content_type: "application/json"
+          )
+
+        Process.sleep(100)
+      end)
+    end)
+
+    Process.sleep(3000)
+    {:ok, %{pid: pid}} = AMQPX.ConnectionPool.get(:publish)
+    :erlang.exit(pid, :kill_connection)
+
+    Process.sleep(3000)
+    {:ok, %{pid: pid}} = AMQPX.ConnectionPool.get(:publish)
+    :erlang.exit(pid, :kill_connection)
+
+    1..message_count
+    |> Enum.each(fn i ->
+      receive do
+        {:basic_deliver, payload,
+         meta = %{content_type: "application/json", correlation_id: "dead-beef"}} ->
+          AMQP.Basic.ack(ch(), meta.delivery_tag)
+
+          if payload != "[#{i * 10}]" do
+            flunk("out of order: expected #{i * 10}, got #{payload}")
           end
       end
     end)

@@ -8,11 +8,11 @@ defmodule AMQPX.Publisher.Storage.Memory do
     if record.ref == nil do
       ref = make_ref()
       record = %AMQPX.Publisher.Record{record | publish_seqno: id, ref: ref}
-      Logger.debug("storing new record #{inspect record}")
+      # Logger.debug("storing new record #{inspect record}")
       [record | state]
     else
       record = %AMQPX.Publisher.Record{record | publish_seqno: id}
-      Logger.debug("updating record #{inspect(record)}")
+      # Logger.debug("updating record #{inspect(record)}")
       update_record(record, state)
     end
   end
