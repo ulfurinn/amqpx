@@ -34,32 +34,48 @@ defmodule AMQPX.Test do
     {:ok, _} =
       AMQPX.Publisher.start_link(
         name: :publisher,
-        connection: :test,
+        connection: :publish,
         storage: AMQPX.Publisher.Storage.Memory
       )
 
     {:ok, %{queue: queue}} = AMQP.Queue.declare(ch(), "", auto_delete: true)
     {:ok, _} = AMQP.Basic.consume(ch(), queue)
 
-    :ok =
-      AMQPX.Publisher.publish(
-        :publisher,
-        "test",
-        "ok",
-        "[5]",
-        reply_to: queue,
-        correlation_id: "dead-beef",
-        content_type: "application/json"
-      )
+    message_count = 40
 
-    receive do
-      {:basic_deliver, "[50]",
-       meta = %{content_type: "application/json", correlation_id: "dead-beef"}} ->
-        AMQP.Basic.ack(ch(), meta.delivery_tag)
-    after
-      1000 ->
-        flunk("timeout")
-    end
+    spawn(fn ->
+      1..message_count
+      |> Enum.each(fn i ->
+        :ok =
+          AMQPX.Publisher.publish(
+            :publisher,
+            "test",
+            "ok",
+            "[#{i}]",
+            reply_to: queue,
+            correlation_id: "dead-beef",
+            content_type: "application/json"
+          )
+
+        Process.sleep(100)
+      end)
+    end)
+
+    Process.sleep(1000)
+    {:ok, %{pid: pid}} = AMQPX.ConnectionPool.get(:publish)
+    :erlang.exit(pid, :kill_connection)
+
+    1..message_count
+    |> Enum.each(fn i ->
+      receive do
+        {:basic_deliver, payload,
+         meta = %{content_type: "application/json", correlation_id: "dead-beef"}} ->
+          AMQP.Basic.ack(ch(), meta.delivery_tag)
+          if payload != "[#{i * 10}]" do
+            flunk("out of order")
+          end
+      end
+    end)
   end
 
   test "can make RPC calls" do

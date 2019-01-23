@@ -10,6 +10,17 @@ defmodule AMQPX.Publisher do
     {:exchanges, []}
   ]
 
+  defmodule Record do
+    defstruct [
+      :ref,
+      :publish_seqno,
+      :exchange,
+      :routing_key,
+      :payload,
+      :options
+    ]
+  end
+
   def child_spec(args) do
     %{
       id: Keyword.get(args, :id, __MODULE__),
@@ -21,8 +32,16 @@ defmodule AMQPX.Publisher do
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
 
-  def publish(name, exchange, rk, payload, options \\ []),
-    do: GenServer.call(name, {:publish, {exchange, rk, payload, options}})
+  def publish(name, exchange, rk, payload, options \\ []) do
+    record = %Record{
+      exchange: exchange,
+      routing_key: rk,
+      payload: payload,
+      options: options
+    }
+
+    GenServer.call(name, {:publish, record})
+  end
 
   @impl GenServer
   def init(opts) do
@@ -49,12 +68,13 @@ defmodule AMQPX.Publisher do
     do: mod.init(nil)
 
   @impl GenServer
-  def handle_call(msg = {:publish, _}, _, state) do
-    {:reply, :ok, send_msg(msg, state)}
+  def handle_call({:publish, record}, _, state) do
+    {:reply, :ok, send_msg(record, state)}
   end
 
   @impl GenServer
-  def handle_info({:DOWN, _, _, _, _}, state) do
+  def handle_info({:DOWN, _, _, pid, reason}, state = %__MODULE__{ch: %{pid: pid}}) do
+    Logger.error("publishing connection died: #{reason}")
     schedule_recovery()
     {:noreply, %__MODULE__{state | ch: nil}}
   end
@@ -70,6 +90,9 @@ defmodule AMQPX.Publisher do
     storage_state = storage_mod.confirm(id, multiple, storage_state)
     {:noreply, %__MODULE__{state | storage_state: storage_state}}
   end
+
+  def handle_info(_, state),
+    do: {:noreply, state}
 
   @impl GenServer
   def terminate(_, %__MODULE__{ch: ch}) do
@@ -126,26 +149,30 @@ defmodule AMQPX.Publisher do
   end
 
   defp resend(state = %__MODULE__{storage_mod: storage_mod, storage_state: storage_state}) do
-    {backlog, storage_state} = storage_mod.handoff(storage_state)
-    state = %__MODULE__{state | storage_state: storage_state}
+    backlog = storage_mod.pending(storage_state)
+
+    if backlog != [],
+      do: Logger.info("resending #{length(backlog)} messages")
+
     backlog |> Enum.reduce(state, &send_msg/2)
   end
 
   defp send_msg(
-         msg = {:publish, _},
+         record,
          state = %__MODULE__{ch: nil, storage_mod: storage_mod, storage_state: storage_state}
        ) do
-    storage_state = storage_mod.append(0, msg, storage_state)
+    Logger.info("trying to send a message without a live connection, backlogging")
+    storage_state = storage_mod.store(0, record, storage_state)
     %__MODULE__{state | storage_state: storage_state}
   end
 
   defp send_msg(
-         msg = {:publish, {exchange, routing_key, payload, options}},
+         record,
          state = %__MODULE__{ch: ch, storage_mod: storage_mod, storage_state: storage_state}
        ) do
     id = :amqp_channel.next_publish_seqno(ch.pid)
-    storage_state = storage_mod.append(id, msg, storage_state)
-    AMQP.Basic.publish(ch, exchange, routing_key, payload, options)
+    storage_state = storage_mod.store(id, record, storage_state)
+    AMQP.Basic.publish(ch, record.exchange, record.routing_key, record.payload, record.options)
     %__MODULE__{state | storage_state: storage_state}
   end
 end
