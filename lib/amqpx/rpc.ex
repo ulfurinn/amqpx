@@ -27,10 +27,16 @@ defmodule AMQPX.RPC do
     )
   end
 
-  def call(server, payload, options \\ [], timeout),
+  def call(server, payload, timeout),
+    do: GenServer.call(server, {:call, nil, nil, payload, [], timeout}, timeout)
+
+  def call(server, payload, options, timeout),
     do: GenServer.call(server, {:call, nil, nil, payload, options, timeout}, timeout)
 
-  def call(server, exchange, routing_key, payload, options \\ [], timeout),
+  def call(server, exchange, routing_key, payload, timeout),
+    do: GenServer.call(server, {:call, exchange, routing_key, payload, [], timeout}, timeout)
+
+  def call(server, exchange, routing_key, payload, options, timeout),
     do: GenServer.call(server, {:call, exchange, routing_key, payload, options, timeout}, timeout)
 
   defmodule Worker do

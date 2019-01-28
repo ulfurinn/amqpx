@@ -71,6 +71,7 @@ defmodule AMQPX.Test do
         {:basic_deliver, payload,
          meta = %{content_type: "application/json", correlation_id: "dead-beef"}} ->
           AMQP.Basic.ack(ch(), meta.delivery_tag)
+
           if payload != "[#{i * 10}]" do
             flunk("out of order")
           end
