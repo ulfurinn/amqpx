@@ -75,6 +75,7 @@ defmodule AMQPX.Receiver.Standard do
     :ch,
     :shared_ch,
     :ctag,
+    :default_handler,
     :handlers,
     :task_sup,
     :codecs,
@@ -107,7 +108,8 @@ defmodule AMQPX.Receiver.Standard do
                | opts ::
                Keyword.t()
                | {name :: String.t(), opts :: Keyword.t()}}
-          | {:keys, %{(routing_key :: String.t()) => handler :: module()}}
+          | {:keys, list(String.t()) | %{(routing_key :: String.t()) => handler :: module()}}
+          | {:handler, atom()}
           | {:codecs, %{(mime_type :: String.t()) => :handler | codec :: module()}}
           | {:supervisor, atom()}
           | {:name, atom()}
@@ -128,11 +130,12 @@ defmodule AMQPX.Receiver.Standard do
 
   ## Options
 
-  * `:connection` – do not pass directly, it will be overwritten by `AMQPX.Receiver`
   * `:prefetch` – set the prefetch count; defaults to 1
   * `:exchange` – the exchange to bind to. The exchange is expected to exist; set `:declare` to `true` to create it. Defaults to a durable topic exchange.
   * `:queue` – the queue to consume from. Defaults to an anonymous auto-deleting queue.
-  * `:keys` – a set of routing keys to bind with and their corresponding handler modules. The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
+  * `:keys` – a set of routing keys to bind with and their corresponding handler modules, or just a list of keys. The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
+    If a list is given, the `:handler` option must be set.
+  * `:handler` – the handler to use when no key-specific handler is set
   * `:codecs` – override the default set of codecs; see the Codecs section for details
   * `:supervisor` – the named `Task.Supervisor` to use for individual message handlers
   * `:name` – the name to register the process with
@@ -195,7 +198,9 @@ defmodule AMQPX.Receiver.Standard do
       :ok = AMQP.Queue.bind(ch, queue, ex_name, routing_key: rk)
     end
 
-    Keyword.fetch!(args, :keys) |> Map.keys() |> Enum.each(bind)
+    Keyword.fetch!(args, :keys)
+    |> Enum.map(fn {key, _handler} -> key ; key -> key end)
+    |> Enum.each(bind)
 
     {:ok, ctag} = AMQP.Basic.consume(ch, queue)
 
@@ -206,6 +211,7 @@ defmodule AMQPX.Receiver.Standard do
       shared_ch: shared_ch,
       ctag: ctag,
       handlers: Keyword.fetch!(args, :keys),
+      default_handler: Keyword.get(args, :handler),
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       mime_type: Keyword.get(args, :mime_type),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
@@ -302,7 +308,7 @@ defmodule AMQPX.Receiver.Standard do
   defp handle_message(
          payload,
          meta = %{routing_key: rk},
-         state = %__MODULE__{handlers: handlers, log_traffic: log}
+         state = %__MODULE__{handlers: handlers, default_handler: default_handler, log_traffic: log}
        ) do
     if log,
       do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
@@ -312,10 +318,13 @@ defmodule AMQPX.Receiver.Standard do
         handle_message(handler, payload, meta, state)
 
       _ ->
-        if log,
-          do: Logger.info(["IGNR | ", inspect(meta)])
-
-        nil
+        if default_handler do
+          handle_message(default_handler, payload, meta, state)
+        else
+          if log,
+            do: Logger.info(["IGNR | ", inspect(meta)])
+          nil
+        end
     end
   end
 
