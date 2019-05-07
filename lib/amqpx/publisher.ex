@@ -176,9 +176,32 @@ defmodule AMQPX.Publisher do
          record,
          state = %__MODULE__{ch: ch, storage_mod: storage_mod, storage_state: storage_state}
        ) do
-    id = :amqp_channel.next_publish_seqno(ch.pid)
-    storage_state = storage_mod.store(id, record, storage_state)
-    AMQP.Basic.publish(ch, record.exchange, record.routing_key, record.payload, record.options)
-    %__MODULE__{state | storage_state: storage_state}
+    with id <- get_next_id(ch),
+         false <- id == nil
+    do
+      storage_state = storage_mod.store(id, record, storage_state)
+      try do
+        AMQP.Basic.publish(ch, record.exchange, record.routing_key, record.payload, record.options)
+        %__MODULE__{state | storage_state: storage_state}
+      catch
+        :exit, _ ->
+          # failed to publish, we've already persisted, we can just clear the channel and continue
+          %__MODULE__{state | ch: nil, storage_state: storage_state}
+      end
+    else
+      _ ->
+        # the channel wasn't there to give us an ID
+        # so we retry the whole thing in offline mode
+        send_msg(record, %__MODULE__{state | ch: nil})
+    end
+  end
+
+  # safely get the next publishing ID without dying if the channel has exited
+  defp get_next_id(ch) do
+    :amqp_channel.next_publish_seqno(ch.pid)
+  catch
+    :exit, _ ->
+      # the channel crashed
+      nil
   end
 end
