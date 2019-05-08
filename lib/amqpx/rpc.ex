@@ -1,6 +1,14 @@
 defmodule AMQPX.RPC do
   use Supervisor
 
+  def child_spec(args) do
+    %{
+      id: Keyword.get(args, :id) || Keyword.get(args, :name) || __MODULE__,
+      start: {__MODULE__, :start_link, [args]},
+      type: :supervisor
+    }
+  end
+
   def start_link(args),
     do: Supervisor.start_link(__MODULE__, args)
 
