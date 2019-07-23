@@ -198,7 +198,10 @@ defmodule AMQPX.Receiver.Standard do
     end
 
     Keyword.fetch!(args, :keys)
-    |> Enum.map(fn {key, _handler} -> key ; key -> key end)
+    |> Enum.map(fn
+      {key, _handler} -> key
+      key -> key
+    end)
     |> Enum.each(bind)
 
     {:ok, ctag} = AMQP.Basic.consume(ch, queue)
@@ -307,7 +310,11 @@ defmodule AMQPX.Receiver.Standard do
   defp handle_message(
          payload,
          meta = %{routing_key: rk},
-         state = %__MODULE__{handlers: handlers, default_handler: default_handler, log_traffic: log}
+         state = %__MODULE__{
+           handlers: handlers,
+           default_handler: default_handler,
+           log_traffic: log
+         }
        ) do
     if log,
       do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
@@ -322,6 +329,7 @@ defmodule AMQPX.Receiver.Standard do
         else
           if log,
             do: Logger.info(["IGNR | ", inspect(meta)])
+
           nil
         end
     end
