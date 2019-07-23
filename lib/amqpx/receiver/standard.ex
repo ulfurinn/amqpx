@@ -8,7 +8,7 @@ defmodule AMQPX.Receiver.Standard do
   @callback handle(payload :: any(), meta :: Map.t()) :: any()
 
   @doc """
-  Takes the result or `c:handle/2` or its crash reason and formats it in a way suitable for sending as a reply message.
+  Takes the result or `c:handle/2` or its crash reason and formats it in a way that a codec can handle.
 
   Only used if the incoming message indicates that a reply is necessary.
 
@@ -17,8 +17,7 @@ defmodule AMQPX.Receiver.Standard do
   A bare payload string will be sent as is with the content type `application/octet-stream`.
   """
   @callback format_response(response :: any(), meta :: Map.t()) ::
-              {mime_type :: :json | :text | String.t(), payload :: String.t()} | payload ::
-              String.t()
+              {mime_type :: :json | :text | String.t(), payload :: any()} | payload :: any()
 
   @doc """
   Tells the receiver whether to requeue messages when `c:handle/2` crashes.
