@@ -107,7 +107,9 @@ defmodule AMQPX.Receiver.Standard do
                | opts ::
                Keyword.t()
                | {name :: String.t(), opts :: Keyword.t()}}
-          | {:keys, list(String.t()) | %{(routing_key :: String.t()) => handler :: module()}}
+          | {:keys,
+             list(String.t())
+             | %{(routing_key :: String.t() | {String.t(), String.t()}) => handler :: module()}}
           | {:handler, atom()}
           | {:codecs, %{(mime_type :: String.t()) => :handler | codec :: module()}}
           | {:supervisor, atom()}
@@ -168,20 +170,27 @@ defmodule AMQPX.Receiver.Standard do
     {:ok, shared_ch} = AMQPX.SharedChannel.start(ch)
     :ok = AMQP.Basic.qos(ch, prefetch_count: Keyword.get(args, :prefetch, 1))
 
-    {ex_type, ex_name, ex_opts} =
-      case Keyword.fetch!(args, :exchange) do
-        {type, name, opts} -> {type, name, opts}
-        {type, name} -> {type, name, [durable: true]}
-        name -> {:topic, name, [durable: true]}
+    exchange_config = Keyword.get(args, :exchange)
+
+    ex_name =
+      if exchange_config do
+        {ex_type, ex_name, ex_opts} =
+          case exchange_config do
+            spec = {_type, _name, _opts} -> spec
+            {type, name} -> {type, name, [durable: true]}
+            name -> {:topic, name, [durable: true]}
+          end
+
+        case Keyword.pop(ex_opts, :declare) do
+          {true, ex_opts} ->
+            :ok = AMQP.Exchange.declare(ch, ex_name, ex_type, ex_opts)
+
+          _ ->
+            nil
+        end
+
+        ex_name
       end
-
-    case Keyword.pop(ex_opts, :declare) do
-      {true, ex_opts} ->
-        :ok = AMQP.Exchange.declare(ch, ex_name, ex_type, ex_opts)
-
-      _ ->
-        nil
-    end
 
     {q_name, q_opts} =
       case Keyword.get(args, :queue) do
@@ -193,8 +202,16 @@ defmodule AMQPX.Receiver.Standard do
 
     {:ok, %{queue: queue}} = AMQP.Queue.declare(ch, q_name, q_opts)
 
-    bind = fn rk ->
-      :ok = AMQP.Queue.bind(ch, queue, ex_name, routing_key: rk)
+    bind = fn
+      {exchange, rk} ->
+        :ok = AMQP.Queue.bind(ch, queue, exchange, routing_key: rk)
+
+      rk ->
+        unless ex_name do
+          raise "routing key #{rk} expects a default exchange but none was provided"
+        end
+
+        :ok = AMQP.Queue.bind(ch, queue, ex_name, routing_key: rk)
     end
 
     Keyword.fetch!(args, :keys)
@@ -212,7 +229,7 @@ defmodule AMQPX.Receiver.Standard do
       ch: ch,
       shared_ch: shared_ch,
       ctag: ctag,
-      handlers: Keyword.fetch!(args, :keys),
+      handlers: Keyword.fetch!(args, :keys) |> build_handler_spec(),
       default_handler: Keyword.get(args, :handler),
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       mime_type: Keyword.get(args, :mime_type),
@@ -321,7 +338,7 @@ defmodule AMQPX.Receiver.Standard do
 
     case handlers do
       %{^rk => handler} ->
-        handle_message(handler, payload, meta, state)
+        handle_message(handler || default_handler, payload, meta, state)
 
       _ ->
         if default_handler do
@@ -484,5 +501,14 @@ defmodule AMQPX.Receiver.Standard do
     else
       false
     end
+  end
+
+  defp build_handler_spec(keys) do
+    keys
+    |> Enum.into(%{}, fn
+      {{_exchange, key}, handler} -> {key, handler}
+      spec = {_key, _handler} -> spec
+      key -> {key, nil}
+    end)
   end
 end
