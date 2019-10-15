@@ -161,10 +161,10 @@ defmodule AMQPX.Test do
     [
       connection: :test,
       worker: [
-        exchange: {:topic, "test", declare: true},
+        declare_exchanges: [[name: "test", type: :topic, options: [durable: true]]],
         codecs: %{"application/json" => Jason},
         keys: %{
-          "ok" => AMQPX.Test.Handler
+          {"test", "ok"} => AMQPX.Test.Handler
         }
       ]
     ]

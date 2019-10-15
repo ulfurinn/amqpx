@@ -92,6 +92,9 @@ defmodule AMQPX.Receiver.Standard do
           | {:no_wait, boolean()}
           | {:arguments, list()}
 
+  @type exchange_declare_option ::
+          {:name, String.t()} | {:type, atom()} | {:options, list(exchange_option())}
+
   @type option ::
           {:connection, connection_id :: atom()}
           | {:name, atom()}
@@ -100,6 +103,7 @@ defmodule AMQPX.Receiver.Standard do
              {type :: atom(), name :: String.t(), opts :: [exchange_option]}
              | {type :: atom(), name :: String.t()}
              | name :: String.t()}
+          | {:declare_exchanges, list(exchange_declare_option())}
           | {:queue,
              nil
              | name ::
@@ -133,6 +137,7 @@ defmodule AMQPX.Receiver.Standard do
 
   * `:prefetch` – set the prefetch count; defaults to 1
   * `:exchange` – the exchange to bind to. The exchange is expected to exist; set `:declare` to `true` to create it. Defaults to a durable topic exchange.
+  * `:declare_exchanges` – a list of exchanges to declare during initialization
   * `:queue` – the queue to consume from. Defaults to an anonymous auto-deleting queue.
   * `:keys` – a set of routing keys to bind with and their corresponding handler modules, or just a list of keys. The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
     If a list is given, the `:handler` option must be set.
@@ -192,6 +197,8 @@ defmodule AMQPX.Receiver.Standard do
         ex_name
       end
 
+    Keyword.get(args, :declare_exchanges, []) |> declare_exchanges(ch)
+
     {q_name, q_opts} =
       case Keyword.get(args, :queue) do
         nil -> {"", [auto_delete: true]}
@@ -239,6 +246,17 @@ defmodule AMQPX.Receiver.Standard do
     }
 
     {:ok, state}
+  end
+
+  defp declare_exchanges(specs, ch) do
+    specs |> Enum.each(&declare_exchange(&1, ch))
+  end
+
+  defp declare_exchange(spec, ch) do
+    name = Keyword.fetch!(spec, :name)
+    type = Keyword.get(spec, :type, :topic)
+    opts = Keyword.get(spec, :options, durable: true)
+    :ok = AMQP.Exchange.declare(ch, name, type, opts)
   end
 
   @impl GenServer
