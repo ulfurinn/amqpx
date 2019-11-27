@@ -2,19 +2,22 @@ defmodule AMQPX.Receiver.Standard do
   @doc """
   Called on every incoming message.
 
-  The payload type will depend on the content type of the incoming message and the codec registered for that content type.
-  If there is no matching codec for that content type, the payload will be passed as is.
+  The payload type will depend on the content type of the incoming message and
+  the codec registered for that content type. If there is no matching codec
+  for that content type, the payload will be passed as is.
   """
   @callback handle(payload :: any(), meta :: Map.t()) :: any()
 
   @doc """
-  Takes the result or `c:handle/2` or its crash reason and formats it in a way that a codec can handle.
+  Takes the result or `c:handle/2` or its crash reason and formats it
+  in a way that a codec can handle.
 
   Only used if the incoming message indicates that a reply is necessary.
 
-  `payload` will be passed through the codec indicated by `mime_type`.
-  A payload with no matching codec for the declared MIME type will be sent as is.
-  A bare payload string will be sent as is with the content type `application/octet-stream`.
+  `payload` will be passed through the codec indicated by `mime_type`. A
+  payload with no matching codec for the declared MIME type will be sent as
+  is. A bare payload string will be sent as is with the content type
+  `application/octet-stream`.
   """
   @callback format_response(response :: any(), meta :: Map.t()) ::
               {mime_type :: :json | :text | String.t(), payload :: any()} | payload :: any()
@@ -22,47 +25,86 @@ defmodule AMQPX.Receiver.Standard do
   @doc """
   Tells the receiver whether to requeue messages when `c:handle/2` crashes.
 
-  Be careful with choosing to always requeue. If the crash is not caused by some transient condition such as a lost database connection,
-  but a permanent one such as a bug in the message handler, this will cause the message to be redelivered indefinitely at the highest rate supported by your environment,
-  putting high load on the broker, the network, and the host running your application.
+  Be careful with choosing to always requeue. If the crash is not caused by
+  some transient condition such as a lost database connection, but a permanent
+  one such as a bug in the message handler or a payload that cannot be parsed,
+  this will cause the message to be redelivered indefinitely at the highest
+  rate supported by your hardware, putting high load on the broker, the
+  network, and the host running your application. Consider using `:retry` to
+  break the loop.
 
   Defaults to `false` if not implemented.
   """
   @callback requeue?() :: true | false | :once
 
   @callback handling_node(payload :: any(), meta :: Map.t()) :: atom()
+  @doc """
+  Returns a term uniquely identifying this message.
 
-  @optional_callbacks requeue?: 0, handling_node: 2
+  Used for tracking retry limits. The function must be deterministic for the
+  tracker to work as intended.
+
+  """
+  @callback identity(payload :: any(), meta :: Map.t()) :: term()
+
+  @doc """
+  Called when a message has been retried too many times and has been rejected.
+  """
+  @callback retry_exhausted(payload :: any(), meta :: Map.t()) :: any()
+
+  @optional_callbacks requeue?: 0, handling_node: 2, identity: 2, retry_exhausted: 2
 
   @moduledoc """
   A message handler implementing some sane defaults.
 
-  This server should not be started directly; use the `AMQPX.Receiver` supervisor instead.
+  This server should not be started directly; use the `AMQPX.Receiver`
+  supervisor instead.
 
-  Each receiver sets up its own channel and makes sure it is disposed of when the receiver dies.
+  Each receiver sets up its own channel and makes sure it is disposed of when
+  the receiver dies.
 
-  If you're implementing your own receiver, remember to clean up channels to avoid leaking resources and potentially leaving messages stuck in unacked state.
+  If you're implementing your own receiver, remember to clean up channels to
+  avoid leaking resources and potentially leaving messages stuck in unacked
+  state.
 
-  Each receiver sets up a single queue and binds it with multiple routing keys, assigning to each key a handler module implementing the `AMQPX.Receiver.Standard` behaviour; read the callback documentation for details.
+  Each receiver sets up a single queue and binds it with multiple routing
+  keys, assigning to each key a handler module implementing the
+  `AMQPX.Receiver.Standard` behaviour; read the callback documentation for
+  details.
 
-  If the arriving message sets the `reply_to` and `correlation_id` attributes, the result of the message handler (or its crash reason) will be sent as a reply message. This is designed to work transparently in conjunction with `AMQPX.RPC`.
+  If the arriving message sets the `reply_to` and `correlation_id` attributes,
+  the result of the message handler (or its crash reason) will be sent as a
+  reply message. This is designed to work transparently in conjunction with
+  `AMQPX.RPC`.
 
   # Message handler lifetime
 
-  Each message spawns a `Task` placed under a `Task.Supervisor` with graceful shutdown to help ensure that under normal shutdown all message handlers are allowed to finish their work and send the acks to the broker.
+  Each message spawns a `Task` placed under a `Task.Supervisor` with graceful
+  shutdown to help ensure that under normal shutdown all message handlers are
+  allowed to finish their work and send the acks to the broker.
 
-  `AMQPX` provides a default supervisor process; however, to help ensure that message handlers have access to the resources they need, such as database connections,
-  it is recommended that you start your own `Task.Supervisor`, set ample shutdown time, and place it in your supervision tree after the required resource but before the `AMQPX.Receiver` that will be spawning the handlers.
+  `AMQPX` provides a default supervisor process; however, to help ensure that
+  message handlers have access to the resources they need, such as database
+  connections, it is recommended that you start your own `Task.Supervisor`,
+  set ample shutdown time, and place it in your supervision tree after the
+  required resource but before the `AMQPX.Receiver` that will be spawning the
+  handlers.
 
   # Codecs
 
-  `AMQPX` tries to separate message encoding and the business logic of message handlers with codecs.
+  `AMQPX` tries to separate message encoding and the business logic of message
+  handlers with codecs.
 
-  A codec is a module implementing the `AMQPX.Codec` behaviour. The only codec provided out of the box is `AMQPX.Codec.Text`.
+  A codec is a module implementing the `AMQPX.Codec` behaviour. The only codec
+  provided out of the box is `AMQPX.Codec.Text`.
 
-  `:text` is shorthand for "text/plain" and is handled by `AMQPX.Codec.Text` by default.
+  `:text` is shorthand for "text/plain" and is handled by `AMQPX.Codec.Text`
+  by default.
 
-  `:json` is recognised as shorthand for `application/json`, but no codec is included in `AMQPX`; however, both `Poison` and `Jason` can be used as codec modules directly if you bundle them in your application.
+  `:json` is recognised as shorthand for `application/json`, but no codec is
+  included in `AMQPX`; however, both `Poison` and `Jason` can be used as codec
+  modules directly if you bundle them in your application.
+
   """
 
   use GenServer
@@ -80,8 +122,126 @@ defmodule AMQPX.Receiver.Standard do
     :codecs,
     :mime_type,
     {:log_traffic, false},
-    {:measurer, nil}
+    :measurer,
+    :retry
   ]
+
+  defmodule Retry do
+    defstruct [
+      :table,
+      :limit,
+      :identity
+    ]
+
+    @doc """
+    Retry options.
+
+    `identity` specifies the list of methods to generate a unique term for a
+    message. The first non-`nil` result is used. If all methods evaluate to
+    `nil`, retry tracking is not used for that message.
+    """
+    @type option :: {:limit, integer()} | {:identity, [identity()]}
+
+    @doc """
+
+    """
+    @type identity ::
+            {:property, atom()}
+            | :message_id
+            | {:payload_hash, hash_algo()}
+            | :payload_hash
+            | :payload
+            | :callback
+
+    @doc "Check `:crypto` for supported algorithms."
+    @type hash_algo :: atom()
+
+    def init(nil), do: nil
+
+    def init(opts) do
+      table = :ets.new(__MODULE__, [:public])
+
+      limit = opts |> Keyword.fetch!(:limit)
+      identity = opts |> Keyword.get(:identity, [:message_id, :payload_hash])
+
+      %__MODULE__{
+        table: table,
+        limit: limit,
+        identity: identity
+      }
+    end
+
+    def exhausted?(payload, meta, handler, state)
+    def exhausted?(_, _, _, nil), do: false
+
+    def exhausted?(payload, meta, handler, state = %__MODULE__{table: table, limit: limit}) do
+      case message_identity({payload, meta, handler}, state) do
+        nil ->
+          false
+
+        key ->
+          seen_times =
+            case :ets.lookup(table, key) do
+              [] -> 0
+              [{^key, n}] -> n
+            end
+
+          # A retry limit of 0 allows us to see a message once. A retry limit
+          # of 1 lets us see a message twice, and so on.
+          if seen_times > limit do
+            true
+          else
+            :ets.insert(table, {key, seen_times + 1})
+            false
+          end
+      end
+    end
+
+    def clear(payload, meta, handler, state)
+    def clear(_, _, _, nil), do: nil
+
+    def clear(payload, meta, handler, state = %__MODULE__{table: table}) do
+      case message_identity({payload, meta, handler}, state) do
+        nil ->
+          nil
+
+        key ->
+          :ets.delete(table, key)
+      end
+    end
+
+    defp message_identity(context, state = %__MODULE__{identity: identity}) do
+      identity |> Enum.reduce(nil, &message_identity(context, &1, &2))
+    end
+
+    defp message_identity(_, _, id) when id != nil, do: id
+
+    defp message_identity({_, meta, _}, {:property, property}, _) do
+      meta |> Map.get(property)
+    end
+
+    defp message_identity({payload, _, _}, {:payload_hash, algo}, _) do
+      :crypto.hash(algo, payload)
+    end
+
+    defp message_identity({payload, _, _}, :payload, _) do
+      payload
+    end
+
+    defp message_identity({payload, meta, handler}, :callback, _) do
+      if :erlang.function_exported(handler, :identity, 2) do
+        handler.identity(payload, meta)
+      end
+    end
+
+    defp message_identity(context, :payload_hash, acc) do
+      message_identity(context, {:payload_hash, :sha1}, acc)
+    end
+
+    defp message_identity(context, :message_id, acc) do
+      message_identity(context, {:property, :message_id}, acc)
+    end
+  end
 
   @type exchange_option ::
           {:declare, boolean()}
@@ -120,6 +280,7 @@ defmodule AMQPX.Receiver.Standard do
           | {:name, atom()}
           | {:log_traffic, boolean()}
           | {:measurer, module()}
+          | {:retry, [AMQPX.Receiver.Standard.Retry.option()]}
 
   @doc false
   def child_spec(args) do
@@ -139,8 +300,9 @@ defmodule AMQPX.Receiver.Standard do
   * `:exchange` – the exchange to bind to. The exchange is expected to exist; set `:declare` to `true` to create it. Defaults to a durable topic exchange.
   * `:declare_exchanges` – a list of exchanges to declare during initialization
   * `:queue` – the queue to consume from. Defaults to an anonymous auto-deleting queue.
-  * `:keys` – a set of routing keys to bind with and their corresponding handler modules, or just a list of keys. The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
-    If a list is given, the `:handler` option must be set.
+  * `:keys` – a set of routing keys to bind with and their corresponding handler modules, or just a list of keys.
+     The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
+     If a list is given, the `:handler` option must be set.
   * `:handler` – the handler to use when no key-specific handler is set
   * `:codecs` – override the default set of codecs; see the Codecs section for details
   * `:supervisor` – the named `Task.Supervisor` to use for individual message handlers
@@ -162,6 +324,8 @@ defmodule AMQPX.Receiver.Standard do
 
   @impl GenServer
   def init(args) do
+    alias __MODULE__.Retry
+
     Process.flag(:trap_exit, true)
 
     name =
@@ -228,6 +392,8 @@ defmodule AMQPX.Receiver.Standard do
     end)
     |> Enum.each(bind)
 
+    retry = args |> Keyword.get(:retry) |> Retry.init()
+
     {:ok, ctag} = AMQP.Basic.consume(ch, queue)
 
     state = %__MODULE__{
@@ -242,7 +408,8 @@ defmodule AMQPX.Receiver.Standard do
       mime_type: Keyword.get(args, :mime_type),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
       log_traffic: Keyword.get(args, :log_traffic, false),
-      measurer: Keyword.get(args, :measurer, nil)
+      measurer: Keyword.get(args, :measurer, nil),
+      retry: retry
     }
 
     {:ok, state}
@@ -304,7 +471,7 @@ defmodule AMQPX.Receiver.Standard do
     {:noreply, state}
   end
 
-  def handle_info({:basic_deliver, payload, meta}, state) do
+  def handle_info(m = {:basic_deliver, payload, meta}, state) do
     handle_message(payload, meta, state)
     {:noreply, state}
   end
@@ -348,25 +515,36 @@ defmodule AMQPX.Receiver.Standard do
          state = %__MODULE__{
            handlers: handlers,
            default_handler: default_handler,
-           log_traffic: log
+           log_traffic: log,
+           retry: retry
          }
        ) do
     if log,
       do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
 
-    case handlers do
-      %{^rk => handler} ->
-        handle_message(handler || default_handler, payload, meta, state)
+    handler =
+      case handlers do
+        %{^rk => handler} ->
+          handler || default_handler
 
-      _ ->
-        if default_handler do
-          handle_message(default_handler, payload, meta, state)
-        else
-          if log,
-            do: Logger.info(["IGNR | ", inspect(meta)])
+        _ ->
+          default_handler
+      end
 
-          nil
-        end
+    if handler do
+      if Retry.exhausted?(payload, meta, handler, retry) do
+        reject(state, meta)
+
+        if :erlang.function_exported(handler, :retry_exhausted, 2),
+          do: handler.retry_exhausted(payload, meta)
+
+        Retry.clear(payload, meta, handler, retry)
+      else
+        handle_message(handler, payload, meta, state)
+      end
+    else
+      if log, do: Logger.info(["IGNR | ", inspect(meta)])
+      reject(state, meta)
     end
   end
 
@@ -375,12 +553,13 @@ defmodule AMQPX.Receiver.Standard do
          payload,
          meta,
          state = %__MODULE__{
-           ch: ch,
            shared_ch: shared_ch,
            task_sup: sup,
-           measurer: measurer
+           measurer: measurer,
+           retry: retry
          }
        ) do
+    alias __MODULE__.Retry
     receiver = self()
     share_ref = make_ref()
 
@@ -403,7 +582,8 @@ defmodule AMQPX.Receiver.Standard do
 
       receive do
         {:DOWN, ^ref, _, _, :normal} ->
-          ack(ch, meta)
+          ack(state, meta)
+          Retry.clear(payload, meta, handler, retry)
 
         {:DOWN, ^ref, _, _, reason} ->
           requeue =
@@ -412,7 +592,7 @@ defmodule AMQPX.Receiver.Standard do
               _ -> requeue?(handler, meta)
             end
 
-          reject(ch, meta, requeue: requeue)
+          reject(state, meta, requeue: requeue)
 
           if not requeue,
             do: rpc_reply(reason, handler, meta, state)
@@ -503,8 +683,14 @@ defmodule AMQPX.Receiver.Standard do
 
   defp send_response(_, pid, payload, _, _) when is_pid(pid), do: send(pid, payload)
 
+  defp ack(%__MODULE__{ch: ch}, %{delivery_tag: dtag}), do: AMQP.Basic.ack(ch, dtag)
   defp ack(ch, %{delivery_tag: dtag}), do: AMQP.Basic.ack(ch, dtag)
   defp ack(_, _), do: nil
+
+  defp reject(ch_or_state, meta), do: reject(ch_or_state, meta, requeue: false)
+
+  defp reject(%__MODULE__{ch: ch}, %{delivery_tag: dtag}, opts),
+    do: AMQP.Basic.reject(ch, dtag, opts)
 
   defp reject(ch, %{delivery_tag: dtag}, opts), do: AMQP.Basic.reject(ch, dtag, opts)
   defp reject(_, _, _), do: nil

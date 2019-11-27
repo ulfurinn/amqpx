@@ -143,7 +143,27 @@ defmodule AMQPX.Test do
 
     {:ok, _} = AMQPX.RPC.start_link(rpc_args())
 
-    assert {:ok, [50]} = AMQPX.RPC.call(RPCTest, [5], 1000)
+    assert {:ok, [50]} = AMQPX.RPC.call(RPCTest, [5], 10000)
+  end
+
+  test "can limit retries" do
+    {:ok, _} = __MODULE__.StatefulHandler.start_link()
+
+    {:ok, _} =
+      AMQPX.Receiver.start_link(
+        receiver_args(
+          worker: [
+            keys: %{{"test", "ok"} => __MODULE__.StatefulHandler},
+            retry: [limit: 5, identity: [:message_id]]
+          ]
+        )
+      )
+
+    {:ok, _} = AMQPX.RPC.start_link(rpc_args())
+
+    catch_exit(AMQPX.RPC.call(RPCTest, [5], [message_id: "qwerty"], 500))
+
+    assert 6 = __MODULE__.StatefulHandler.count()
   end
 
   setup _ do
@@ -157,20 +177,25 @@ defmodule AMQPX.Test do
   defp ch,
     do: :erlang.get(:channel)
 
-  defp receiver_args do
+  defp receiver_args(custom \\ []) do
+    {custom_worker, custom} = Keyword.pop(custom, :worker, [])
+
     [
       connection: :test,
-      worker: [
-        declare_exchanges: [[name: "test", type: :topic, options: [durable: true]]],
-        codecs: %{"application/json" => Jason},
-        keys: %{
-          {"test", "ok"} => AMQPX.Test.Handler
-        }
-      ]
+      worker:
+        [
+          declare_exchanges: [[name: "test", type: :topic, options: [durable: true]]],
+          codecs: %{"application/json" => Jason},
+          keys: %{
+            {"test", "ok"} => AMQPX.Test.Handler
+          }
+        ]
+        |> Keyword.merge(custom_worker)
     ]
+    |> Keyword.merge(custom)
   end
 
-  defp rpc_args do
+  defp rpc_args(custom \\ []) do
     [
       name: RPCTest,
       connection: :test,
@@ -179,6 +204,7 @@ defmodule AMQPX.Test do
       codecs: %{"application/json" => Jason},
       mime_type: "application/json"
     ]
+    |> Keyword.merge(custom)
   end
 
   defmodule Handler do
@@ -187,5 +213,28 @@ defmodule AMQPX.Test do
     def handle([input], _meta), do: [input * 10]
 
     def format_response(resp, _meta), do: {{:mime_type, :json}, resp}
+  end
+
+  defmodule StatefulHandler do
+    @behaviour AMQPX.Receiver.Standard
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+    def init(_), do: {:ok, 0}
+
+    def handle(_, _) do
+      GenServer.call(__MODULE__, :increment)
+      raise "test"
+    end
+
+    def format_response(body, _), do: %{error: inspect(body)}
+
+    def requeue?(), do: true
+
+    def count, do: GenServer.call(__MODULE__, :count)
+
+    def handle_call(:increment, _, count), do: {:reply, nil, count + 1}
+    def handle_call(:count, _, count), do: {:reply, count, count}
   end
 end
