@@ -130,7 +130,8 @@ defmodule AMQPX.Receiver.Standard do
     defstruct [
       :table,
       :limit,
-      :identity
+      :identity,
+      :delay
     ]
 
     @doc """
@@ -139,8 +140,11 @@ defmodule AMQPX.Receiver.Standard do
     `identity` specifies the list of methods to generate a unique term for a
     message. The first non-`nil` result is used. If all methods evaluate to
     `nil`, retry tracking is not used for that message.
+
+    `delay` specifies the time to wait (in milliseconds) before rejecting the
+    delivery, to prevent a hot retry loop.
     """
-    @type option :: {:limit, integer()} | {:identity, [identity()]}
+    @type option :: {:limit, integer()} | {:identity, [identity()]} | {:delay, nil | integer()}
 
     @doc """
 
@@ -163,11 +167,13 @@ defmodule AMQPX.Receiver.Standard do
 
       limit = opts |> Keyword.fetch!(:limit)
       identity = opts |> Keyword.get(:identity, [:message_id, :payload_hash])
+      delay = opts |> Keyword.get(:delay)
 
       %__MODULE__{
         table: table,
         limit: limit,
-        identity: identity
+        identity: identity,
+        delay: delay
       }
     end
 
@@ -196,6 +202,10 @@ defmodule AMQPX.Receiver.Standard do
           end
       end
     end
+
+    def delay(state)
+    def delay(%__MODULE__{delay: delay}) when is_integer(delay), do: Process.sleep(delay)
+    def delay(_), do: nil
 
     def clear(payload, meta, handler, state)
     def clear(_, _, _, nil), do: nil
@@ -591,6 +601,8 @@ defmodule AMQPX.Receiver.Standard do
               {:badrpc, _} -> true
               _ -> requeue?(handler, meta)
             end
+
+          if requeue, do: Retry.delay(retry)
 
           reject(state, meta, requeue: requeue)
 
