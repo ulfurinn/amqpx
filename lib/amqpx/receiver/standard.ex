@@ -117,7 +117,8 @@ defmodule AMQPX.Receiver.Standard do
     :shared_ch,
     :ctag,
     :default_handler,
-    :handlers,
+    :direct_handlers,
+    :wildcard_handlers,
     :task_sup,
     :codecs,
     :mime_type,
@@ -313,6 +314,7 @@ defmodule AMQPX.Receiver.Standard do
   * `:keys` – a set of routing keys to bind with and their corresponding handler modules, or just a list of keys.
      The handler modules must implement the `AMQPX.Receiver.Standard` behaviour.
      If a list is given, the `:handler` option must be set.
+     Topic exchange wildcards '*' and '#' are supported.
   * `:handler` – the handler to use when no key-specific handler is set
   * `:codecs` – override the default set of codecs; see the Codecs section for details
   * `:supervisor` – the named `Task.Supervisor` to use for individual message handlers
@@ -406,14 +408,17 @@ defmodule AMQPX.Receiver.Standard do
 
     {:ok, ctag} = AMQP.Basic.consume(ch, queue)
 
+    {direct_handlers, wildcard_handlers} = args |> Keyword.get(:keys) |> build_handler_specs()
+
     state = %__MODULE__{
       name: name,
       conn: conn,
       ch: ch,
       shared_ch: shared_ch,
       ctag: ctag,
-      handlers: Keyword.fetch!(args, :keys) |> build_handler_spec(),
       default_handler: Keyword.get(args, :handler),
+      direct_handlers: direct_handlers,
+      wildcard_handlers: wildcard_handlers,
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       mime_type: Keyword.get(args, :mime_type),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
@@ -423,6 +428,18 @@ defmodule AMQPX.Receiver.Standard do
     }
 
     {:ok, state}
+  end
+
+  defp build_handler_specs(handlers) do
+    grouped_handlers = handlers |> Map.keys() |> Enum.group_by(&wildcard?/1)
+
+    direct_handler_keys = grouped_handlers |> Map.get(false, [])
+    direct_handlers = handlers |> Map.take(direct_handler_keys) |> build_handler_spec()
+
+    wildcard_handler_keys = grouped_handlers |> Map.get(true, [])
+    wildcard_handlers = handlers |> Map.take(wildcard_handler_keys) |> build_handler_spec()
+
+    {direct_handlers, wildcard_handlers}
   end
 
   defp declare_exchanges(specs, ch) do
@@ -435,6 +452,9 @@ defmodule AMQPX.Receiver.Standard do
     opts = Keyword.get(spec, :options, durable: true)
     :ok = AMQP.Exchange.declare(ch, name, type, opts)
   end
+
+  defp wildcard?({_exchange, rk}), do: wildcard?(rk)
+  defp wildcard?(rk), do: AMQPX.RoutingKeyMatcher.wildcard?(rk)
 
   @impl GenServer
   def handle_call(
@@ -519,12 +539,30 @@ defmodule AMQPX.Receiver.Standard do
     nil
   end
 
+  defp get_handler(rk, %__MODULE__{
+         direct_handlers: direct,
+         wildcard_handlers: wildcard,
+         default_handler: default
+       }) do
+    case direct do
+      %{^rk => handler} ->
+        handler
+
+      _ ->
+        case wildcard |> Enum.find(fn {k, _} -> handler_match?(rk, k) end) do
+          {_, handler} -> handler
+          _ -> nil
+        end
+    end || default
+  end
+
+  defp handler_match?(rk, {_exchange, pattern}), do: handler_match?(rk, pattern)
+  defp handler_match?(rk, pattern), do: AMQPX.RoutingKeyMatcher.matches?(rk, pattern)
+
   defp handle_message(
          payload,
          meta = %{routing_key: rk},
          state = %__MODULE__{
-           handlers: handlers,
-           default_handler: default_handler,
            log_traffic: log,
            retry: retry
          }
@@ -532,14 +570,7 @@ defmodule AMQPX.Receiver.Standard do
     if log,
       do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
 
-    handler =
-      case handlers do
-        %{^rk => handler} ->
-          handler || default_handler
-
-        _ ->
-          default_handler
-      end
+    handler = get_handler(rk, state)
 
     if handler do
       if Retry.exhausted?(payload, meta, handler, retry) do

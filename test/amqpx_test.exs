@@ -28,6 +28,36 @@ defmodule AMQPX.Test do
     end
   end
 
+  test "can receive a message with a wildcard key" do
+    {:ok, _} =
+      AMQPX.Receiver.start_link(
+        receiver_args(worker: [keys: %{{"test", "a.#"} => __MODULE__.Handler}])
+      )
+
+    {:ok, %{queue: queue}} = AMQP.Queue.declare(ch(), "", auto_delete: true)
+    {:ok, _} = AMQP.Basic.consume(ch(), queue)
+
+    :ok =
+      AMQP.Basic.publish(
+        ch(),
+        "test",
+        "a.b.c",
+        "[5]",
+        reply_to: queue,
+        correlation_id: "dead-beef",
+        content_type: "application/json"
+      )
+
+    receive do
+      {:basic_deliver, "[50]",
+       meta = %{content_type: "application/json", correlation_id: "dead-beef"}} ->
+        AMQP.Basic.ack(ch(), meta.delivery_tag)
+    after
+      1000 ->
+        flunk("timeout")
+    end
+  end
+
   test "can send a message using the confirming publisher with the memory backend" do
     {:ok, _} = AMQPX.Receiver.start_link(receiver_args())
 
