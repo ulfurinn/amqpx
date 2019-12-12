@@ -177,11 +177,18 @@ defmodule AMQPX.Publisher do
          state = %__MODULE__{ch: ch, storage_mod: storage_mod, storage_state: storage_state}
        ) do
     with id <- get_next_id(ch),
-         false <- id == nil
-    do
+         false <- id == nil do
       storage_state = storage_mod.store(id, record, storage_state)
+
       try do
-        AMQP.Basic.publish(ch, record.exchange, record.routing_key, record.payload, record.options)
+        AMQP.Basic.publish(
+          ch,
+          record.exchange,
+          record.routing_key,
+          record.payload,
+          record.options
+        )
+
         %__MODULE__{state | storage_state: storage_state}
       catch
         :exit, _ ->
