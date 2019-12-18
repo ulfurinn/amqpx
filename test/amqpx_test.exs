@@ -196,6 +196,37 @@ defmodule AMQPX.Test do
     assert 6 = __MODULE__.StatefulHandler.count()
   end
 
+  test "can deduplicate messages" do
+    {:ok, _} = __MODULE__.Deduplicator.start_link()
+
+    {:ok, _} =
+      AMQPX.Receiver.start_link(
+        receiver_args(
+          worker: [
+            keys: %{{"test", "ok"} => __MODULE__.Deduplicator},
+            deduplicate: [identity: [:message_id], callback: __MODULE__.Deduplicator]
+          ]
+        )
+      )
+
+    uuid = UUID.uuid4()
+
+    :ok =
+      AMQP.Basic.publish(ch(), "test", "ok", "true",
+        content_type: "application/json",
+        message_id: uuid
+      )
+
+    :ok =
+      AMQP.Basic.publish(ch(), "test", "ok", "true",
+        content_type: "application/json",
+        message_id: uuid
+      )
+
+    Process.sleep(500)
+    assert 1 = __MODULE__.Deduplicator.count()
+  end
+
   setup _ do
     {:ok, conn} = AMQPX.ConnectionPool.get(:test)
     {:ok, ch} = AMQP.Channel.open(conn)
@@ -266,5 +297,53 @@ defmodule AMQPX.Test do
 
     def handle_call(:increment, _, count), do: {:reply, nil, count + 1}
     def handle_call(:count, _, count), do: {:reply, count, count}
+  end
+
+  defmodule Deduplicator do
+    @behaviour AMQPX.Receiver.Standard.Deduplicate
+    @behaviour AMQPX.Receiver.Standard
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+    def already_seen?(id), do: GenServer.call(__MODULE__, {:already_seen?, id})
+    def remember_message(id), do: GenServer.call(__MODULE__, {:remember_message, id})
+    def increment, do: GenServer.call(__MODULE__, :increment)
+    def count, do: GenServer.call(__MODULE__, :count)
+
+    def init(_) do
+      table = :ets.new(__MODULE__, [:set])
+      {:ok, {table, 0}}
+    end
+
+    def handle_call({:already_seen?, id}, _, state = {table, _}) do
+      seen =
+        case :ets.lookup(table, id) do
+          [] -> false
+          _ -> true
+        end
+
+      {:reply, seen, state}
+    end
+
+    def handle_call({:remember_message, id}, _, state = {table, _}) do
+      true = :ets.insert(table, {id})
+      {:reply, nil, state}
+    end
+
+    def handle_call(:increment, _, {table, count}) do
+      {:reply, nil, {table, count + 1}}
+    end
+
+    def handle_call(:count, _, state = {_, count}) do
+      {:reply, count, state}
+    end
+
+    def handle(_, _) do
+      increment()
+      true
+    end
+
+    def format_response(_, _), do: nil
   end
 end

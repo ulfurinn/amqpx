@@ -124,7 +124,8 @@ defmodule AMQPX.Receiver.Standard do
     :mime_type,
     {:log_traffic, false},
     :measurer,
-    :retry
+    :retry,
+    :deduplicate
   ]
 
   @type exchange_option ::
@@ -165,6 +166,7 @@ defmodule AMQPX.Receiver.Standard do
           | {:log_traffic, boolean()}
           | {:measurer, module()}
           | {:retry, [AMQPX.Receiver.Standard.Retry.option()]}
+          | {:deduplicate, [AMQPX.Receiver.Standard.Deduplicate.option()]}
 
   @doc false
   def child_spec(args) do
@@ -210,6 +212,7 @@ defmodule AMQPX.Receiver.Standard do
   @impl GenServer
   def init(args) do
     alias __MODULE__.Retry
+    alias __MODULE__.Deduplicate
 
     Process.flag(:trap_exit, true)
 
@@ -278,6 +281,7 @@ defmodule AMQPX.Receiver.Standard do
     |> Enum.each(bind)
 
     retry = args |> Keyword.get(:retry) |> Retry.init()
+    deduplicate = args |> Keyword.get(:deduplicate) |> Deduplicate.init()
 
     {:ok, ctag} = AMQP.Basic.consume(ch, queue)
 
@@ -297,7 +301,8 @@ defmodule AMQPX.Receiver.Standard do
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
       log_traffic: Keyword.get(args, :log_traffic, false),
       measurer: Keyword.get(args, :measurer, nil),
-      retry: retry
+      retry: retry,
+      deduplicate: deduplicate
     }
 
     {:ok, state}
@@ -437,10 +442,13 @@ defmodule AMQPX.Receiver.Standard do
          meta = %{routing_key: rk},
          state = %__MODULE__{
            log_traffic: log,
-           retry: retry
+           retry: retry,
+           deduplicate: dedup
          }
        ) do
     alias __MODULE__.Retry
+    alias __MODULE__.Deduplicate
+
     if log,
       do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
 
@@ -448,17 +456,19 @@ defmodule AMQPX.Receiver.Standard do
 
     if handler do
       cond do
+        Deduplicate.already_seen?(payload, meta, handler, dedup) ->
+          ack(state, meta)
 
         Retry.exhausted?(payload, meta, handler, retry) ->
-        reject(state, meta)
+          reject(state, meta)
 
-        if :erlang.function_exported(handler, :retry_exhausted, 2),
-          do: handler.retry_exhausted(payload, meta)
+          if :erlang.function_exported(handler, :retry_exhausted, 2),
+            do: handler.retry_exhausted(payload, meta)
 
-        Retry.clear(payload, meta, handler, retry)
+          Retry.clear(payload, meta, handler, retry)
 
         true ->
-        handle_message(handler, payload, meta, state)
+          handle_message(handler, payload, meta, state)
       end
     else
       if log, do: Logger.info(["IGNR | ", inspect(meta)])
@@ -474,10 +484,12 @@ defmodule AMQPX.Receiver.Standard do
            shared_ch: shared_ch,
            task_sup: sup,
            measurer: measurer,
-           retry: retry
+           retry: retry,
+           deduplicate: dedup
          }
        ) do
     alias __MODULE__.Retry
+    alias __MODULE__.Deduplicate
     receiver = self()
     share_ref = make_ref()
 
@@ -501,6 +513,7 @@ defmodule AMQPX.Receiver.Standard do
       receive do
         {:DOWN, ^ref, _, _, :normal} ->
           ack(state, meta)
+          Deduplicate.remember(payload, meta, handler, dedup)
           Retry.clear(payload, meta, handler, retry)
 
         {:DOWN, ^ref, _, _, reason} ->
