@@ -127,133 +127,6 @@ defmodule AMQPX.Receiver.Standard do
     :retry
   ]
 
-  defmodule Retry do
-    defstruct [
-      :table,
-      :limit,
-      :identity,
-      :delay
-    ]
-
-    @doc """
-    Retry options.
-
-    `identity` specifies the list of methods to generate a unique term for a
-    message. The first non-`nil` result is used. If all methods evaluate to
-    `nil`, retry tracking is not used for that message.
-
-    `delay` specifies the time to wait (in milliseconds) before rejecting the
-    delivery, to prevent a hot retry loop.
-    """
-    @type option :: {:limit, integer()} | {:identity, [identity()]} | {:delay, nil | integer()}
-
-    @doc """
-
-    """
-    @type identity ::
-            {:property, atom()}
-            | :message_id
-            | {:payload_hash, hash_algo()}
-            | :payload_hash
-            | :payload
-            | :callback
-
-    @doc "Check `:crypto` for supported algorithms."
-    @type hash_algo :: atom()
-
-    def init(nil), do: nil
-
-    def init(opts) do
-      table = :ets.new(__MODULE__, [:public])
-
-      limit = opts |> Keyword.fetch!(:limit)
-      identity = opts |> Keyword.get(:identity, [:message_id, :payload_hash])
-      delay = opts |> Keyword.get(:delay)
-
-      %__MODULE__{
-        table: table,
-        limit: limit,
-        identity: identity,
-        delay: delay
-      }
-    end
-
-    def exhausted?(payload, meta, handler, state)
-    def exhausted?(_, _, _, nil), do: false
-
-    def exhausted?(payload, meta, handler, state = %__MODULE__{table: table, limit: limit}) do
-      case message_identity({payload, meta, handler}, state) do
-        nil ->
-          false
-
-        key ->
-          seen_times =
-            case :ets.lookup(table, key) do
-              [] -> 0
-              [{^key, n}] -> n
-            end
-
-          # A retry limit of 0 allows us to see a message once. A retry limit
-          # of 1 lets us see a message twice, and so on.
-          if seen_times > limit do
-            true
-          else
-            :ets.insert(table, {key, seen_times + 1})
-            false
-          end
-      end
-    end
-
-    def delay(state)
-    def delay(%__MODULE__{delay: delay}) when is_integer(delay), do: Process.sleep(delay)
-    def delay(_), do: nil
-
-    def clear(payload, meta, handler, state)
-    def clear(_, _, _, nil), do: nil
-
-    def clear(payload, meta, handler, state = %__MODULE__{table: table}) do
-      case message_identity({payload, meta, handler}, state) do
-        nil ->
-          nil
-
-        key ->
-          :ets.delete(table, key)
-      end
-    end
-
-    defp message_identity(context, state = %__MODULE__{identity: identity}) do
-      identity |> Enum.reduce(nil, &message_identity(context, &1, &2))
-    end
-
-    defp message_identity(_, _, id) when id != nil, do: id
-
-    defp message_identity({_, meta, _}, {:property, property}, _) do
-      meta |> Map.get(property)
-    end
-
-    defp message_identity({payload, _, _}, {:payload_hash, algo}, _) do
-      :crypto.hash(algo, payload)
-    end
-
-    defp message_identity({payload, _, _}, :payload, _) do
-      payload
-    end
-
-    defp message_identity({payload, meta, handler}, :callback, _) do
-      if :erlang.function_exported(handler, :identity, 2) do
-        handler.identity(payload, meta)
-      end
-    end
-
-    defp message_identity(context, :payload_hash, acc) do
-      message_identity(context, {:payload_hash, :sha1}, acc)
-    end
-
-    defp message_identity(context, :message_id, acc) do
-      message_identity(context, {:property, :message_id}, acc)
-    end
-  end
-
   @type exchange_option ::
           {:declare, boolean()}
           | {:durable, boolean()}
@@ -567,20 +440,24 @@ defmodule AMQPX.Receiver.Standard do
            retry: retry
          }
        ) do
+    alias __MODULE__.Retry
     if log,
       do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
 
     handler = get_handler(rk, state)
 
     if handler do
-      if Retry.exhausted?(payload, meta, handler, retry) do
+      cond do
+
+        Retry.exhausted?(payload, meta, handler, retry) ->
         reject(state, meta)
 
         if :erlang.function_exported(handler, :retry_exhausted, 2),
           do: handler.retry_exhausted(payload, meta)
 
         Retry.clear(payload, meta, handler, retry)
-      else
+
+        true ->
         handle_message(handler, payload, meta, state)
       end
     else

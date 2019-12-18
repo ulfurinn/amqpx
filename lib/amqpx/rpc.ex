@@ -127,8 +127,8 @@ defmodule AMQPX.RPC do
             payload,
             content_type: mime_type,
             reply_to: state.queue,
-            correlation_id: uuid,
-            message_id: Keyword.get_lazy(options, :message_id, &UUID.uuid4/0),
+            correlation_id: Keyword.get(options, :correlation_id, uuid),
+            message_id: Keyword.get(options, :message_id, uuid),
             headers: headers
           )
 
