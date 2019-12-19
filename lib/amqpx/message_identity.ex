@@ -20,7 +20,10 @@ defmodule AMQPX.MessageIdentity do
   defp message_identity(_, _, id) when id != nil, do: id
 
   defp message_identity({_, meta, _}, {:property, property}, _) do
-    meta |> Map.get(property)
+    case meta |> Map.get(property) do
+      :undefined -> nil
+      x -> x
+    end
   end
 
   defp message_identity({payload, _, _}, {:payload_hash, algo}, _) do
