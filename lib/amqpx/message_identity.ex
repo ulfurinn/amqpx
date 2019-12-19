@@ -41,7 +41,7 @@ defmodule AMQPX.MessageIdentity do
   end
 
   defp message_identity(context, :payload_hash, acc) do
-    message_identity(context, {:payload_hash, :sha1}, acc)
+    message_identity(context, {:payload_hash, :sha}, acc)
   end
 
   defp message_identity(context, :message_id, acc) do
