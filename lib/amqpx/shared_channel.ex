@@ -37,7 +37,7 @@ defmodule AMQPX.SharedChannel do
     end
   end
 
-  def terminate(_, state = %__MODULE__{ch: ch}) do
+  def terminate(_, %__MODULE__{ch: ch}) do
     AMQP.Channel.close(ch)
   end
 end

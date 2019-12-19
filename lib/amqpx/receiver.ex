@@ -14,7 +14,7 @@ defmodule AMQPX.Receiver do
 
   @type option ::
           {:connection, name :: atom()}
-          | {:worker, module() | args :: Keyword.t() | {module(), args :: Keyword.t()}}
+          | {:worker, module() | (args :: Keyword.t()) | {module(), args :: Keyword.t()}}
           | {:reconnect, seconds :: integer()}
           | {:max_restarts, integer()}
           | {:max_seconds, integer()}

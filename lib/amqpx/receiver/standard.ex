@@ -20,7 +20,7 @@ defmodule AMQPX.Receiver.Standard do
   `application/octet-stream`.
   """
   @callback format_response(response :: any(), meta :: Map.t()) ::
-              {mime_type :: :json | :text | String.t(), payload :: any()} | payload :: any()
+              {mime_type :: :json | :text | String.t(), payload :: any()} | (payload :: any())
 
   @doc """
   Tells the receiver whether to requeue messages when `c:handle/2` crashes.
@@ -147,20 +147,18 @@ defmodule AMQPX.Receiver.Standard do
           | {:exchange,
              {type :: atom(), name :: String.t(), opts :: [exchange_option]}
              | {type :: atom(), name :: String.t()}
-             | name :: String.t()}
+             | (name :: String.t())}
           | {:declare_exchanges, list(exchange_declare_option())}
           | {:queue,
              nil
-             | name ::
-               String.t()
-               | opts ::
-               Keyword.t()
-               | {name :: String.t(), opts :: Keyword.t()}}
+             | (name :: String.t())
+             | (opts :: Keyword.t())
+             | {name :: String.t(), opts :: Keyword.t()}}
           | {:keys,
              list(String.t())
              | %{(routing_key :: String.t() | {String.t(), String.t()}) => handler :: module()}}
           | {:handler, atom()}
-          | {:codecs, %{(mime_type :: String.t()) => :handler | codec :: module()}}
+          | {:codecs, %{(mime_type :: String.t()) => :handler | (codec :: module())}}
           | {:supervisor, atom()}
           | {:name, atom()}
           | {:log_traffic, boolean()}
@@ -379,7 +377,7 @@ defmodule AMQPX.Receiver.Standard do
     {:noreply, state}
   end
 
-  def handle_info(m = {:basic_deliver, payload, meta}, state) do
+  def handle_info({:basic_deliver, payload, meta}, state) do
     handle_message(payload, meta, state)
     {:noreply, state}
   end

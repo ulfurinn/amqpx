@@ -1,7 +1,4 @@
 defmodule AMQPX.MessageIdentity do
-  @doc """
-
-  """
   @type identity_function() ::
           {:property, atom()}
           | :message_id
@@ -10,7 +7,6 @@ defmodule AMQPX.MessageIdentity do
           | :payload
           | :callback
 
-  @doc "Check `:crypto` for supported algorithms."
   @type hash_algo() :: atom()
 
   def get(payload, meta, handler, functions) do

@@ -45,7 +45,7 @@ defmodule AMQPX.Receiver.Standard.Retry do
         payload,
         meta,
         handler,
-        state = %__MODULE__{table: table, limit: limit, identity: identity}
+        %__MODULE__{table: table, limit: limit, identity: identity}
       ) do
     case AMQPX.MessageIdentity.get(payload, meta, handler, identity) do
       nil ->
@@ -76,7 +76,7 @@ defmodule AMQPX.Receiver.Standard.Retry do
   def clear(payload, meta, handler, state)
   def clear(_, _, _, nil), do: nil
 
-  def clear(payload, meta, handler, state = %__MODULE__{table: table, identity: identity}) do
+  def clear(payload, meta, handler, %__MODULE__{table: table, identity: identity}) do
     case AMQPX.MessageIdentity.get(payload, meta, handler, identity) do
       nil ->
         nil

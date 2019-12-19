@@ -56,7 +56,7 @@ defmodule AMQPX.RoutingKeyMatcher do
   def matches?([], []), do: true
   def matches?([], ["#"]), do: true
 
-  def matches?(k = [h | t1], p = ["#" | t2]) do
+  def matches?(k = [_ | t1], p = ["#" | t2]) do
     # matches exactly one, or matches more than one, or matches zero
     matches?(t1, t2) || matches?(t1, p) || matches?(k, t2)
   end

@@ -28,7 +28,8 @@ defmodule AMQPX.MixProject do
     [
       {:amqp, "~> 1.1.0"},
       {:uuid, "~> 1.1"},
-      {:jason, "~> 1.1", only: :test, runtime: false},
+      {:jason, "~> 1.1", optional: true},
+      {:poison, "~> 3.1", optional: true},
       {:ex_doc, ex_doc_version(), only: :dev, runtime: false}
     ]
   end
