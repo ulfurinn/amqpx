@@ -6,9 +6,13 @@ defmodule AMQPX.MixProject do
       app: :ulfnet_amqpx,
       version: "1.0.0",
       elixir: "~> 1.6",
+      build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       name: "AMQPX",
+      description: "Higher-level functionality on top of AMQP",
+      package: package(),
+      source_url: "https://github.com/ulfurinn/amqpx",
       docs: [
         extras: ["README.md"]
       ]
@@ -36,5 +40,15 @@ defmodule AMQPX.MixProject do
 
   defp ex_doc_version() do
     "~> 0.19.1"
+  end
+
+  defp package() do
+    [
+      name: "ulfnet_amqpx",
+      licenses: ["MIT"],
+      links: %{
+        "github" => "https://github.com/ulfurinn/amqpx"
+      }
+    ]
   end
 end

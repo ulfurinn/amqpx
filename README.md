@@ -4,9 +4,12 @@
 
 A set of higher-level AMQP constructs:
 
-* message handlers with transparent connection recovery
+* transparent connection recovery
+* graceful shutdown
 * RPC over AMQP
 * message encoding
+* retry limiting
+* deduplication
 
 ## Installation
 
@@ -16,7 +19,7 @@ by adding `ulfnet_amqpx` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ulfnet_amqpx, "~> 0.1.0"}
+    {:ulfnet_amqpx, "~> 1.0.0"}
   ]
 end
 ```
