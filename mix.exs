@@ -34,12 +34,12 @@ defmodule AMQPX.MixProject do
       {:uuid, "~> 1.1"},
       {:jason, "~> 1.1", optional: true},
       {:poison, "~> 3.1", optional: true},
-      {:ex_doc, ex_doc_version(), only: :dev, runtime: false}
+      {:ex_doc, ex_doc_version(), only: :dev, runtime: false, optional: true}
     ]
   end
 
   defp ex_doc_version() do
-    "~> 0.19.1"
+    "~> 0.21"
   end
 
   defp package() do
