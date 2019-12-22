@@ -11,6 +11,7 @@ defmodule AMQPX.Publisher do
   ]
 
   defmodule Record do
+    @moduledoc false
     defstruct [
       :ref,
       :publish_seqno,
@@ -21,6 +22,7 @@ defmodule AMQPX.Publisher do
     ]
   end
 
+  @doc false
   def child_spec(args) do
     %{
       id: Keyword.get(args, :id, __MODULE__),

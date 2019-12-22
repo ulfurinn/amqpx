@@ -2,6 +2,8 @@ defmodule AMQPX do
   @doc """
   Sets up a cleanup link between the caller and the channel.
 
+  This exists for cases when the native Erlang link is too blunt a tool.
+
   If the caller crashes, the channel will be closed to avoid leaks.
 
   If the channel crashes, the caller will receive `{:channel_died, channel, reason}`.

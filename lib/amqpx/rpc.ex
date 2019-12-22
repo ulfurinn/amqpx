@@ -1,6 +1,15 @@
 defmodule AMQPX.RPC do
+  @moduledoc """
+  Provides RPC functionality over AMQP message passing.
+
+  Include this in your supervision tree. See `start_link/1` for configuration options.
+
+  The receiver works from an auto-deleting anonymous queue. If the channel is broken, response messages will be lost and callers will crash.
+  This may or may not be acceptable to your use case. This may be improved in the future.
+  """
   use Supervisor
 
+  @doc false
   def child_spec(args) do
     %{
       id: Keyword.get(args, :id) || Keyword.get(args, :name) || __MODULE__,
@@ -9,6 +18,17 @@ defmodule AMQPX.RPC do
     }
   end
 
+  @doc """
+  Starts an RPC client instance.
+
+  Arguments:
+  * `:connection`: a connection ID as registered with `AMQPX.ConnectionPool`.
+  * `:reconnect`: the delay between reconnection attempts, in seconds. This is used so that a broker going down does not exceed the worker restart intensity. Defaults to `1`.
+  * `:exchange`: the default exchange to publish to; see `call/4`/`call/6` for defails.
+  * `:routing_key`: the default RK to use for publishing; see `call/4`/`call/6` for defails.
+  * `:codecs`: codec overrides.
+  * `:mime_type`: the content type for published messages; defaults to `application/octet-stream`. If the receiver is based on `AMQPX.Receiver.Standard`, see that the codec setup on both sides is compatible.
+  """
   def start_link(args),
     do: Supervisor.start_link(__MODULE__, args)
 
@@ -35,19 +55,32 @@ defmodule AMQPX.RPC do
     )
   end
 
-  def call(server, payload, timeout),
-    do: GenServer.call(server, {:call, nil, nil, payload, [], timeout}, timeout)
+  @doc """
+  Makes an RPC call using the worker's default configured exchange and routing key.
 
-  def call(server, payload, options, timeout),
+  Options are:
+  * `:headers`
+  * `:message_id`
+  * `:correlation_id`
+  * `:expire`: if `true`, sets the message `expiration` property equal to timeout. The
+  effect will be that the receiver might not observe the message. Since after
+  the timeout the caller is known to ignore the response even if it eventually
+  arrives, it may be acceptable to drop the request entirely and thus reduce
+  the receiver workload.
+
+  Timeout is in milliseconds. `:infinity` is not allowed.
+  """
+  def call(server, payload, options \\ [], timeout),
     do: GenServer.call(server, {:call, nil, nil, payload, options, timeout}, timeout)
 
-  def call(server, exchange, routing_key, payload, timeout),
-    do: GenServer.call(server, {:call, exchange, routing_key, payload, [], timeout}, timeout)
-
-  def call(server, exchange, routing_key, payload, options, timeout),
+  @doc """
+  Makes an RPC call using the explicitly provided exchange and routing key. All other arguments are the same as for `call/4`.
+  """
+  def call(server, exchange, routing_key, payload, options \\ [], timeout),
     do: GenServer.call(server, {:call, exchange, routing_key, payload, options, timeout}, timeout)
 
   defmodule Worker do
+    @moduledoc false
     use GenServer
 
     defstruct [
@@ -109,7 +142,7 @@ defmodule AMQPX.RPC do
         ) do
       uuid = UUID.uuid4()
 
-      with ex <- exchange || state.exchange,
+      with ex = exchange || state.exchange,
            rk = routing_key || state.routing_key,
            {:exchange, true} <- {:exchange, ex != nil},
            {:routing_key, true} <- {:routing_key, rk != nil} do
@@ -119,21 +152,30 @@ defmodule AMQPX.RPC do
 
         headers = Keyword.get(options, :headers, [])
 
-        :ok =
-          AMQP.Basic.publish(
-            ch,
-            ex,
-            rk,
-            payload,
+        args =
+          [
             content_type: mime_type,
             reply_to: state.queue,
             correlation_id: Keyword.get(options, :correlation_id, uuid),
             message_id: Keyword.get(options, :message_id, uuid),
             headers: headers
-          )
+          ]
+          |> add_expiration(options, timeout)
 
-        pending = Map.put(state.pending_calls, uuid, call)
-        {:noreply, %__MODULE__{state | pending_calls: pending}}
+        case AMQP.Basic.publish(
+               ch,
+               ex,
+               rk,
+               payload,
+               args
+             ) do
+          :ok ->
+            pending = Map.put(state.pending_calls, uuid, call)
+            {:noreply, %__MODULE__{state | pending_calls: pending}}
+
+          err ->
+            {:reply, {:error, err}, state}
+        end
       else
         {:exchange, _} ->
           {:reply, {:error, :no_exchange}, state}
@@ -178,6 +220,14 @@ defmodule AMQPX.RPC do
 
     def handle_info(_, state) do
       {:noreply, state}
+    end
+
+    defp add_expiration(args, opts, timeout) do
+      if Keyword.get(opts, :expire) do
+        Keyword.put(args, :expiration, Integer.to_string(timeout))
+      else
+        args
+      end
     end
 
     defp expired?({_, %Call{expire_at: expire_at}}, now),
