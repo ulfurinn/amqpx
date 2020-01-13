@@ -14,7 +14,8 @@ defmodule AMQPX.MixProject do
       package: package(),
       source_url: "https://github.com/ulfurinn/amqpx",
       docs: [
-        extras: ["README.md"]
+        extras: ["README.md"],
+        main: "readme"
       ]
     ]
   end
