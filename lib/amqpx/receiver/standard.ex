@@ -140,6 +140,8 @@ defmodule AMQPX.Receiver.Standard do
   @type exchange_declare_option ::
           {:name, String.t()} | {:type, atom()} | {:options, list(exchange_option())}
 
+  @type log_option :: {:enabled, boolean()} | {:remove_headers, list()}
+
   @type option ::
           {:connection, connection_id :: atom()}
           | {:name, atom()}
@@ -161,7 +163,7 @@ defmodule AMQPX.Receiver.Standard do
           | {:codecs, %{(mime_type :: String.t()) => :handler | (codec :: module())}}
           | {:supervisor, atom()}
           | {:name, atom()}
-          | {:log_traffic, boolean()}
+          | {:log_traffic, boolean() | [log_option()]}
           | {:measurer, module()}
           | {:retry, [AMQPX.Receiver.Standard.Retry.option()]}
           | {:deduplicate, [AMQPX.Receiver.Standard.Deduplicate.option()]}
@@ -297,7 +299,7 @@ defmodule AMQPX.Receiver.Standard do
       codecs: Keyword.get(args, :codecs, %{}) |> AMQPX.Codec.codecs(),
       mime_type: Keyword.get(args, :mime_type),
       task_sup: Keyword.get(args, :supervisor, AMQPX.Application.task_supervisor()),
-      log_traffic: Keyword.get(args, :log_traffic, false),
+      log_traffic: Keyword.get(args, :log_traffic) |> normalize_log_options(),
       measurer: Keyword.get(args, :measurer, nil),
       retry: retry,
       deduplicate: deduplicate
@@ -305,6 +307,11 @@ defmodule AMQPX.Receiver.Standard do
 
     {:ok, state}
   end
+
+  defp normalize_log_options(nil), do: [enabled: false, remove_headers: []]
+  defp normalize_log_options(false), do: [enabled: false, remove_headers: []]
+  defp normalize_log_options(true), do: [enabled: true, remove_headers: []]
+  defp normalize_log_options(list) when is_list(list), do: list
 
   defp build_handler_specs(handlers) do
     grouped_handlers = handlers |> Map.keys() |> Enum.group_by(&wildcard?/1)
@@ -447,8 +454,8 @@ defmodule AMQPX.Receiver.Standard do
     alias __MODULE__.Retry
     alias __MODULE__.Deduplicate
 
-    if log,
-      do: Logger.info(["RECV ", payload, " | ", inspect(meta)])
+    if log?(log),
+      do: Logger.info(["RECV ", payload, " | ", inspect(meta |> filter_headers(log))])
 
     handler = get_handler(rk, state)
 
@@ -597,8 +604,8 @@ defmodule AMQPX.Receiver.Standard do
 
     {:ok, payload} = AMQPX.Codec.encode(payload, mime, codecs, handler)
 
-    if log,
-      do: Logger.info(["SEND ", payload, " | ", inspect(meta)])
+    if log?(log),
+      do: Logger.info(["SEND ", payload, " | ", inspect(meta |> filter_headers(log))])
 
     send_response(ch, reply_to, payload, AMQPX.Codec.expand_mime_shortcut(mime), correlation_id)
   end
@@ -636,6 +643,23 @@ defmodule AMQPX.Receiver.Standard do
     else
       false
     end
+  end
+
+  defp log?(options), do: Keyword.get(options, :enabled, false)
+
+  defp filter_headers(meta, options) do
+    filtered = Keyword.get(options, :remove_headers, [])
+
+    headers =
+      case meta[:headers] do
+        headers when is_list(headers) ->
+          headers |> Enum.reject(fn {key, _type, _value} -> key in filtered end)
+
+        headers ->
+          headers
+      end
+
+    Map.put(meta, :headers, headers)
   end
 
   defp build_handler_spec(keys) do
